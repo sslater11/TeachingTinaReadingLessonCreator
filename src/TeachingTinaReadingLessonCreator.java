@@ -12,18 +12,19 @@ import java.awt.*;
 import java.awt.event.*;
 
 import javax.swing.*;
+import javax.swing.border.Border;
 import javax.swing.text.*;
 
 import libteachingtinadbmanager.*;
-import libteachingtinadbmanager.ReadingLessonCreator;
-import libteachingtinadbmanager.SentenceAnalyzer;
-import libteachingtinadbmanager.WordWithIndexes;
 
 import javax.swing.event.*;
 import javax.swing.text.DefaultEditorKit.*;
-import javax.swing.text.StyledEditorKit.*;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.*;
 import java.util.List;
 
@@ -38,11 +39,14 @@ public class TeachingTinaReadingLessonCreator {
 	private static final String DEFAULT_FONT_FAMILY = "SansSerif";
 	private static final int DEFAULT_FONT_SIZE = 30;
 	private static final int DEFAULT_FONT_SIZE_SMALL = 14;
+	private static final int DEFAULT_FONT_SIZE_LARGE = 42;
 	//private static final List<String> FONT_LIST = Arrays.asList(new String [] {"Arial", "Calibri", "Cambria", "Courier New", "Comic Sans MS", "Dialog", "Georgia", "Helevetica", "Lucida Sans", "Monospaced", "Tahoma", "Times New Roman", "Verdana"});
 	private static final String [] FONT_SIZES  = {"Font Size", "12", "14", "16", "18", "20", "22", "24", "26", "28", "30", "36", "48", "72"};
 
 	String font_family;
-	Font small_font = new Font(DEFAULT_FONT_FAMILY, Font.PLAIN, DEFAULT_FONT_SIZE_SMALL);
+	public static Font small_font = new Font(DEFAULT_FONT_FAMILY, Font.PLAIN, DEFAULT_FONT_SIZE_SMALL);
+	public static Font large_font = new Font(DEFAULT_FONT_FAMILY, Font.PLAIN, DEFAULT_FONT_SIZE_LARGE);
+	public static Font medium_font = new Font(DEFAULT_FONT_FAMILY, Font.PLAIN, DEFAULT_FONT_SIZE);
 	JLabel lbl_reading_level;
 	JList previous_lessons_words_list;
 	JList most_common_words_list;
@@ -73,7 +77,7 @@ public class TeachingTinaReadingLessonCreator {
 		this.lbl_reading_level.setFont( small_font );
 
 		JLabel lbl_previous_lessons_words_title = new JLabel( "<html><div style='text-align: center;'>" + "<b>Previous Lessons<br>Words</b>" + "</div></html>" );
-		JLabel lbl_common_words_title = new JLabel("<html><div style='text-align: center;'>" + "<b>Most Common<br>Words<br>That Tina<br>Doesn't Know Yet<b>"  + "</div></html>");
+		JLabel lbl_common_words_title = new JLabel("<html><div style='text-align: center;'>" + "<b>Most Common<br>Words<br>That Tina<br>Doesn't Know Yet</b>"  + "</div></html>");
 
 		lbl_previous_lessons_words_title.setFont( small_font );
 		lbl_common_words_title.setFont( small_font );
@@ -96,9 +100,10 @@ public class TeachingTinaReadingLessonCreator {
 		
 
 		// Create the buttons
-		FocusOnTextActionListener focus_on_text_action_listener = new FocusOnTextActionListener();
-		CreateLessonActionListener create_lesson_action_listener = new CreateLessonActionListener();
-		PreviewLessonActionListener preview_lesson_action_listener = new PreviewLessonActionListener();
+		FocusOnTextActionListener focus_on_text_action_listener          = new FocusOnTextActionListener();
+		CreateLessonActionListener create_lesson_action_listener         = new CreateLessonActionListener();
+		PreviewLessonActionListener preview_lesson_action_listener       = new PreviewLessonActionListener();
+		FlashcardManagerActionListener flashcard_manager_action_listener = new FlashcardManagerActionListener();
 
 		JButton copyButton = new JButton( new CopyAction() );
 		copyButton.setText( "Copy" );
@@ -123,6 +128,9 @@ public class TeachingTinaReadingLessonCreator {
 		create_lesson.addActionListener( create_lesson_action_listener );
 		create_lesson.setFont( small_font );
 
+		JButton flashcard_manager_button = new JButton( "Flashcard Manager / Fix Incomplete Cards" );
+		flashcard_manager_button.addActionListener( flashcard_manager_action_listener );
+		flashcard_manager_button.setFont( small_font );
 
 		// Setup the toolbar panel.
 		font_size_combo_box = new JComboBox<String>(FONT_SIZES);
@@ -140,6 +148,7 @@ public class TeachingTinaReadingLessonCreator {
 		controls_panel.add( new JSeparator(SwingConstants.VERTICAL) );
 		controls_panel.add( create_lesson );
 		controls_panel.add( preview_lesson );
+		controls_panel.add( flashcard_manager_button );
 
 		JPanel hint_1_panel = new JPanel( new FlowLayout(FlowLayout.CENTER) );
 		JPanel hint_2_panel = new JPanel( new FlowLayout(FlowLayout.CENTER) );
@@ -496,11 +505,11 @@ public class TeachingTinaReadingLessonCreator {
 				// Write the new lesson to a file.
 				String filepath = TextEditorDBManager.getDirectory() + TextEditorDBManager.getFileName( deck.getLevel() );
 				File filename = new File( filepath );
-				System.out.println("writing to: " + filepath );
-				TextEditorDBManager.writeDB(filename, deck);
+				System.out.println( "writing to: " + filepath );
+				TextEditorDBManager.writeDB( filename, deck );
 				
 				// Now add the lesson to the previous lessons
-				addNewLesson(deck);
+				addNewLesson( deck );
 				
 				updateComponents();
 			}
@@ -522,8 +531,548 @@ public class TeachingTinaReadingLessonCreator {
 		}
 	}
 
+	private class FlashcardManagerActionListener implements ActionListener {
+
+		public void actionPerformed(ActionEvent e) {
+			new MyFlashcardManager();
+		}
+	}
 }
- 
+
+/**
+ * Stores a Card object along with it's database file and line number.
+ * It allows us to check if the card is missing any media.
+ */
+class IncompleteReadingCard {
+	Card card;
+	String db_line;
+	int line_number;
+	File db_file;
+	
+	IncompleteReadingCard( String db_line, int line_number, CardsGroup cards_group, File db_file ) {
+		this.card        = new Card( db_line, null, cards_group );
+		this.db_line     = db_line;
+		this.line_number = line_number;
+		this.db_file     = db_file;
+	}
+	
+	public Boolean isCardIncomplete() {
+		// Check if the card is a sentence to see if it needs a timings tag.
+		if ( ReadingLessonDeck.isCardSentenceMode( card ) ) {
+			if( ! CardDBTagManager.hasReadAlongTimingsTag( this.db_line ) ) {
+				return true;
+			}
+		}
+		
+		// Check if the card is any sound, as these don't have any image tag to check for.
+		if(
+		    ( card.group.getGroupName() == TextEditorDBManager.CONSONANT_PAIRS ) ||
+		    ( card.group.getGroupName() == TextEditorDBManager.VOWEL_CONSONANT_PAIRS ) ||
+		    ( card.group.getGroupName() == TextEditorDBManager.CONSONANT_GROUPS ) ||
+		    ( card.group.getGroupName() == TextEditorDBManager.DOUBLE_CONSONANT_VOWEL_PAIRS ) ||
+		    ( card.group.getGroupName() == TextEditorDBManager.DOUBLE_VOWEL_CONSONANT_PAIRS ) ||
+		    ( card.group.getGroupName() == TextEditorDBManager.VOWEL_PAIRS )
+		){
+			if( ! CardDBTagManager.hasAudioTag( this.db_line ) ) {
+				return true;
+			}
+			else {
+				return false;
+			}
+			
+		}
+
+		// It's a word or a sentence, so check for missing audio and images.
+		if( ! CardDBTagManager.hasAudioTag( this.db_line ) ||
+		    ! CardDBTagManager.hasImageTag( this.db_line ) )
+		{
+			return true;
+			/*
+			 * TODO:
+			 * update this. make it check the audio, image, and readalongtimings tags for whether their files exist.
+			 */
+			//if( ! IncompleteReadingCard.doesTagsFileExist( line ) )
+			//{
+			//	return true;
+			//}
+		} else {
+			return false;
+		}
+	}
+
+	public static boolean doesTagsFileExist( String tag ) {
+		// Extract the filename.
+		String file_name = null;
+		file_name = CardDBTagManager.getAudioFilename( tag );
+
+		if( file_name == null ) {
+			file_name = CardDBTagManager.getImageFilename( tag );
+		}
+
+		if( file_name == null ) {
+			file_name = CardDBTagManager.getReadAlongTimingsFilename( tag );
+		}
+
+		// The tag passed wasn't recognised, so return false.
+		if( file_name == null ) {
+			return false;
+		}
+		else {
+			// Check if the file exists.
+			File temp = new File( file_name );
+			return temp.exists();
+		}
+	}
+}
+
+class MyFlashcardManager {
+	ArrayList<IncompleteReadingCard> incomplete_cards;
+	ArrayList<IncompleteReadingCard> complete_cards;
+
+	// Used to know which card we are displaying on the screen.
+	IncompleteReadingCard current_card;
+
+	// Frame components
+	JFrame frame;
+	JPanel cards_content_sub_panel;
+	JPanel cards_content_panel;
+	JScrollPane cards_content_scroll_pane;
+	JList complete_cards_list;
+	JList incomplete_cards_list;
+	JLabel lbl_complete_cards_title;
+	JLabel lbl_incomplete_cards_title;
+
+	int BORDER_THICKNESS = 20;
+
+	// Colours
+	String STR_LIGHT_RED   = "#FF9999";
+	String STR_LIGHT_GREEN = "#CCFF99";
+	String STR_DARK_RED    = "#990000";
+	String STR_DARK_GREEN  = "#4C9900";
+	Color DARK_GREEN  = new Color( 76, 153, 0 );
+	Color DARK_RED    = new Color( 153, 0, 0 );
+	Color LIGHT_RED   = new Color( 255, 153, 153 );
+	Color LIGHT_GREEN = new Color( 204, 255, 153 );
+
+	// Fonts
+	Font small_font = TeachingTinaReadingLessonCreator.small_font;
+	Font large_font = TeachingTinaReadingLessonCreator.large_font;
+	Font medium_font = TeachingTinaReadingLessonCreator.medium_font;
+
+
+	// Used so that our sentences get truncated when we show them in our JList.
+	int MAXIMUM_JLIST_STRING_LENGTH = 30;
+
+	MyFlashcardManager() {
+		loadCards();
+		
+		frame = new JFrame( "Incomplete Reading Cards" );
+		
+		// Setup the card's contents panel.
+		this.cards_content_panel = new JPanel();
+		this.cards_content_sub_panel = new JPanel();
+		this.cards_content_sub_panel.setLayout( new BoxLayout(cards_content_sub_panel, BoxLayout.Y_AXIS) );
+		this.cards_content_panel    .setLayout( new BoxLayout(cards_content_panel,     BoxLayout.Y_AXIS) );
+		this.cards_content_panel.add( new JScrollPane( cards_content_sub_panel ) );
+
+		// Cards lists.
+		complete_cards_list = new JList( );
+		complete_cards_list.setFont( small_font );
+		complete_cards_list.setSelectionMode(ListSelectionModel.SINGLE_INTERVAL_SELECTION);
+		complete_cards_list.setLayoutOrientation(JList.VERTICAL);
+		complete_cards_list.setVisibleRowCount(-1);
+
+		incomplete_cards_list = new JList( );
+		incomplete_cards_list.setFont( small_font );
+		incomplete_cards_list.setSelectionMode(ListSelectionModel.SINGLE_INTERVAL_SELECTION);
+		incomplete_cards_list.setLayoutOrientation(JList.VERTICAL);
+		incomplete_cards_list.setVisibleRowCount(-1);
+
+		// Assign cards to the lists
+		complete_cards_list  .setListData( makeStringArrayFromCards( complete_cards   ) );
+		incomplete_cards_list.setListData( makeStringArrayFromCards( incomplete_cards ) );
+
+		// Setup the headings for "Completed Cards" and "Incomplete Cards".
+		// the &nbsp; is added for using spaces to add padding to the label.
+		String spaces_padding = "&nbsp;&nbsp;&nbsp;&nbsp;";
+		lbl_complete_cards_title   = new JLabel( "<html><div style='text-align: center;'>" + spaces_padding + "Completed"  + spaces_padding + "<br>Cards</div></html>", JLabel.CENTER );
+		lbl_incomplete_cards_title = new JLabel( "<html><div style='text-align: center;'>" + spaces_padding + "Incomplete" + spaces_padding + "<br>Cards</div></html>", JLabel.CENTER );
+
+		lbl_complete_cards_title  .setBackground( LIGHT_GREEN );
+		lbl_incomplete_cards_title.setBackground( LIGHT_RED   );
+
+		lbl_complete_cards_title  .setOpaque( true );
+		lbl_incomplete_cards_title.setOpaque( true );
+		
+		lbl_complete_cards_title  .setAlignmentX( Component.CENTER_ALIGNMENT );
+		lbl_incomplete_cards_title.setAlignmentX( Component.CENTER_ALIGNMENT );
+
+		lbl_complete_cards_title  .setFont( medium_font );
+		lbl_incomplete_cards_title.setFont( medium_font );
+		
+		Border border_complete   = BorderFactory.createLineBorder( DARK_GREEN, BORDER_THICKNESS );
+		Border border_incomplete = BorderFactory.createLineBorder( DARK_RED,   BORDER_THICKNESS );
+		lbl_complete_cards_title  .setBorder( border_complete   );
+		lbl_incomplete_cards_title.setBorder( border_incomplete );
+
+		// Setup the incomplete cards panel.
+		JPanel incomplete_cards_panel = new JPanel();
+		incomplete_cards_panel.setLayout( new BoxLayout(incomplete_cards_panel, BoxLayout.Y_AXIS) );
+		incomplete_cards_panel.add( lbl_incomplete_cards_title );
+		incomplete_cards_panel.add( new JScrollPane( incomplete_cards_list ) );
+
+		// Setup the complete cards panel.
+		JPanel complete_cards_panel = new JPanel();
+		complete_cards_panel.setLayout( new BoxLayout(complete_cards_panel, BoxLayout.Y_AXIS) );
+		complete_cards_panel.add( lbl_complete_cards_title );
+		complete_cards_panel.add( new JScrollPane( complete_cards_list ) );
+
+
+		// Add action listeners to the lists.
+		
+		// These will update the card preview whenever we click on an un-selected item in the list.
+		// Also allows us to hold down the left click and drag up and down to quickly switch between cards.
+		incomplete_cards_list.addListSelectionListener( new ListSelectionListener() {
+			@Override
+			public void valueChanged(ListSelectionEvent e) {
+				int index = incomplete_cards_list.getSelectedIndex();
+				if( index > 0 ) {
+					displayCard( incomplete_cards.get( index ) );
+				}
+			}
+		});
+		
+		complete_cards_list.addListSelectionListener( new ListSelectionListener() {
+			@Override
+			public void valueChanged(ListSelectionEvent e) {
+				int index = complete_cards_list.getSelectedIndex();
+				if( index > 0 ) {
+					displayCard( complete_cards.get( index ) );
+				}
+			}
+		});
+		
+		// These will update the card preview whenever we release a mouse click.
+		// This allows us to load a card when it is already highlighted in the list.
+		// It's value doesn't change, so the above listeners won't fire.
+		//
+		// We have the completed and incompleted list, so when switching between the two, a user might click the card that
+		// is already highlighted in the list. This allows the card to be shown.
+		// e.g. The card "poop" is incomplete. The card "cheese" is completed.
+		// The user could now click on poop, then cheese, then poop, then cheese.
+		incomplete_cards_list.addMouseListener( new MouseListener() {
+			@Override
+			public void mouseReleased(MouseEvent e) {
+				int index = incomplete_cards_list.getSelectedIndex();
+				if( index > 0 ) {
+					displayCard( incomplete_cards.get( index ) );
+				}
+			}
+
+			@Override
+			public void mouseClicked(MouseEvent e) { }
+
+			@Override
+			public void mousePressed(MouseEvent e) { }
+
+			@Override
+			public void mouseEntered(MouseEvent e) { }
+
+			@Override
+			public void mouseExited(MouseEvent e) { }
+		});
+
+		complete_cards_list.addMouseListener( new MouseListener() {
+			@Override
+			public void mouseReleased(MouseEvent e) {
+				int index = complete_cards_list.getSelectedIndex();
+				if( index > 0 ) {
+					displayCard( complete_cards.get( index ) );
+				}
+			}
+
+			@Override
+			public void mouseClicked(MouseEvent e) { }
+
+			@Override
+			public void mousePressed(MouseEvent e) { }
+
+			@Override
+			public void mouseEntered(MouseEvent e) { }
+
+			@Override
+			public void mouseExited(MouseEvent e) { }
+		});
+
+
+		// Add everything to the frame.
+		frame.add( incomplete_cards_panel, BorderLayout.WEST   );
+		frame.add( cards_content_panel,    BorderLayout.CENTER );
+		frame.add( complete_cards_panel,   BorderLayout.EAST   );
+
+		// Display the frame.
+		frame.setSize(600, 500);
+		frame.setLocationRelativeTo( null );
+		frame.setDefaultCloseOperation( JFrame.DISPOSE_ON_CLOSE );
+		frame.setVisible( true );
+		frame.setExtendedState( JFrame.MAXIMIZED_BOTH );
+	}
+
+	/**
+	 * Scans through all reading lesson files and populates
+	 * the complete_cards and incomplete_cards lists based
+	 * on whether they are missing any media.
+	 */
+	public void loadCards() {
+		this.complete_cards   = new ArrayList<IncompleteReadingCard>();
+		this.incomplete_cards = new ArrayList<IncompleteReadingCard>();
+
+		// Read in every Line from every database and add them to either the incomplete list or complete list.
+		// Get a list of all lesson files
+		ArrayList<String> all_lesson_files = TextEditorDBManager.getAllLessonFiles();
+
+		/**
+		 * Scan through these and setup our array of lessons.
+		 **/
+		for(int i = 0; i < all_lesson_files.size(); i++ ) {
+			// Load the database file into memory.
+			File file = new File( all_lesson_files.get(i) );
+			
+			// Scan through the contents and see if it's a card, and if it appears to be, then see if it's missing any media.
+			try( BufferedReader br = new BufferedReader( new FileReader( file ) ) ) {
+				String line = "";
+				CardsGroup current_card_group = null;
+				int line_number = -1; // Increments on the start of the loop, so the starting value is really 0.
+
+				while( ( line = br.readLine() ) != null ) {
+					line_number++;
+					if( CardDBManager.isDBLineAGroup( line.split("\t") ) ) {
+						// Get the current group name and save it.
+						String group_name = line.split("\t")[ CardsGroup.INDEX_NAME ];
+						current_card_group = new CardsGroup(group_name, null);
+					}
+
+					if( CardDBManager.isDBLineACard( line.split("\t") ) ) {
+						IncompleteReadingCard card = new IncompleteReadingCard(line, line_number, current_card_group, file);
+						
+						// It's a valid flashcard line, so now check if there's any media missing from it.
+						if( card.isCardIncomplete() ) {
+							incomplete_cards.add( card );
+						}
+						else
+						{
+							complete_cards.add( card );
+						}
+					}
+				}
+
+			} catch (FileNotFoundException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+	}
+
+	/**
+	 * Returns an Array of Strings by getting the
+	 * word, sound, or sentence from a reading lesson card.
+	 * Sentences will be truncated to a width of MAXIMUM_JLIST_STRING_LENGTH.
+	 */
+	public String[] makeStringArrayFromCards ( ArrayList<IncompleteReadingCard> cards ) {
+		ArrayList<String> card_front_list = new ArrayList<String>();
+
+		for( int i = 0; i < cards.size(); i++ ) {
+			String text = cards.get(i).card.getContent( ReadingLessonDeck.INDEX_TEXT );
+
+			// Truncate the string if it's too long.
+			if( text.length() > MAXIMUM_JLIST_STRING_LENGTH ) {
+				text = text.substring( 0, MAXIMUM_JLIST_STRING_LENGTH - 3 );
+				text += "...";
+			}
+
+			card_front_list.add( text );
+		}
+
+		// Convert the ArrayList to an array and return.
+		return card_front_list.toArray( new String[ card_front_list.size() ] );
+	}
+
+	/**
+	 * Draw the card on the screen.
+	 * @param card
+	 */
+	public void displayCard( IncompleteReadingCard card ) {
+		// Stop this method from being ran when we are already displaying the card.
+		if( card == current_card ) {
+			return;
+		} else {
+			current_card = card;
+		}
+
+		// Used later to check if we should display the "Completed" or "Incomplete" heading at the top of the card display.
+		boolean is_completed = true;
+
+		// Initial setup for displaying the card on the screen.
+		ArrayList<String> text_list  = ReadingLessonDeck.getCardText ( card.card );
+		ArrayList<String> image_list = ReadingLessonDeck.getCardImage( card.card );
+		ArrayList<String> audio_list = ReadingLessonDeck.getCardAudio( card.card );
+		ArrayList<String> read_along_timings_list = ReadingLessonDeck.getCardReadAlongTimings( card.card );
+
+		MyScrollableJPanel panel = new MyScrollableJPanel();
+		panel.setLayout( new BoxLayout(panel, BoxLayout.Y_AXIS) );
+
+		JLabel card_completion_title         = new JLabel( "" );
+		JLabel card_text_title               = new JLabel( "Card's text: " );
+		JLabel card_image_title              = new JLabel( "Card's Images: " );
+		JLabel card_audio_title              = new JLabel( "Card's Audio: " );
+		JLabel card_read_along_timings_title = new JLabel( "Card's Read Along Timings: " );
+
+		card_completion_title        .setFont( large_font );
+		card_text_title              .setFont( large_font );
+		card_image_title             .setFont( large_font );
+		card_audio_title             .setFont( large_font );
+		card_read_along_timings_title.setFont( large_font );
+
+		card_completion_title        .setAlignmentX( Component.CENTER_ALIGNMENT );
+		card_text_title              .setAlignmentX( Component.CENTER_ALIGNMENT );
+		card_image_title             .setAlignmentX( Component.CENTER_ALIGNMENT );
+		card_audio_title             .setAlignmentX( Component.CENTER_ALIGNMENT );
+		card_read_along_timings_title.setAlignmentX( Component.CENTER_ALIGNMENT );
+
+		// Use a JLabel for padding as a JSeparator just doesn't give us enough padding.
+		// Yeah, lazy, but it works lol.
+		JLabel padding_label_1 = new JLabel("  ");
+		JLabel padding_label_2 = new JLabel("  ");
+		JLabel padding_label_3 = new JLabel("  ");
+		padding_label_1.setFont(large_font);
+		padding_label_2.setFont(large_font);
+		padding_label_3.setFont(large_font);
+
+
+		// Add card to the screen and show missing audio, images, and read along timings.
+		panel.add( card_completion_title );
+
+		// Display Card's text.
+		panel.add( card_text_title );
+		for(int i = 0; i < text_list.size(); i++ ) {
+			String text = text_list.get(i);
+			text = text.replaceAll( "<br>", "\n" );
+
+			// Use a JTextPane to display the card's text.
+			// This is better than a label, because it has word wrapping.
+			JTextPane text_pane = new JTextPane();
+			text_pane.setFont( medium_font );
+			text_pane.setForeground( DARK_GREEN );
+
+			// Make the text center aligned.
+			StyledDocument doc = text_pane.getStyledDocument();
+			SimpleAttributeSet center = new SimpleAttributeSet();
+			StyleConstants.setAlignment(center, StyleConstants.ALIGN_CENTER);
+			
+			// Add the text to the text_pane.
+			try {
+				doc.insertString(0, text, center);
+			} catch (BadLocationException e) {
+				e.printStackTrace();
+			}
+			// Center align the text we just added.
+			doc.setParagraphAttributes(0, doc.getLength(), center, false);
+			text_pane.setStyledDocument( doc );
+			
+			// Set the text_pane to look more like a JLabel.
+			text_pane.setOpaque( false );
+			text_pane.setEditable(false);
+			
+			text_pane.setAlignmentX( Component.CENTER_ALIGNMENT );
+			panel.add( text_pane );
+		}
+
+		panel.add( padding_label_1 );
+		panel.add( new JSeparator() );
+
+
+		// Display Card's images.
+		panel.add( card_image_title );
+		if( image_list.size() == 0 ) {
+			JLabel label_missing = new JLabel( "Missing image.");
+			label_missing.setFont( medium_font );
+			label_missing.setForeground( DARK_RED );
+			label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+			panel.add( label_missing );
+
+			is_completed = false;
+		}
+
+		panel.add( padding_label_2 );
+		panel.add( new JSeparator() );
+
+
+		// Display Card's audio.
+		panel.add( card_audio_title );
+		if( audio_list.size() == 0 ) {
+			JLabel label_missing = new JLabel( "Missing audio.");
+			label_missing.setFont( medium_font );
+			label_missing.setForeground( DARK_RED );
+			label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+			panel.add( label_missing );
+
+			is_completed = false;
+		}
+
+		panel.add( padding_label_3 );
+		panel.add( new JSeparator() );
+
+
+		// Display Card's read along timings.
+		panel.add( card_read_along_timings_title );
+		if( read_along_timings_list.size() == 0 ) {
+			JLabel label_missing = new JLabel( "Missing read along timings.");
+			label_missing.setFont( medium_font );
+			label_missing.setForeground( DARK_RED );
+			label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+			panel.add( label_missing );
+
+			is_completed = false;
+		}
+
+
+		// Update the heading to show if the card is completed or not.
+		if( is_completed ) {
+			Border border = BorderFactory.createLineBorder( DARK_GREEN, BORDER_THICKNESS );
+			card_completion_title.setBorder( border );
+
+			card_completion_title.setText( "    Card is Completed :)    " );
+			card_completion_title.setBackground( LIGHT_GREEN );
+			card_completion_title.setOpaque( true );
+		} else {
+			Border border = BorderFactory.createLineBorder( DARK_RED, BORDER_THICKNESS );
+			card_completion_title.setBorder( border );
+
+			card_completion_title.setText( "    Card has missing media.    " );
+			card_completion_title.setBackground( LIGHT_RED );
+			card_completion_title.setOpaque( true );
+		}
+
+
+		// Display the new panel.
+		this.cards_content_panel.removeAll();
+		this.cards_content_sub_panel = panel;
+		
+		JScrollPane scroll_pane = new JScrollPane( this.cards_content_sub_panel );
+		scroll_pane.setHorizontalScrollBarPolicy( JScrollPane.HORIZONTAL_SCROLLBAR_NEVER   );
+		scroll_pane.setVerticalScrollBarPolicy  ( JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED );
+		this.cards_content_panel.add( scroll_pane );
+
+		// For some reason the panel doesn't update on my system, but this forces it to.
+		frame.repaint();
+		frame.validate();
+	}
+}
+
 class WordList {
 	private ArrayList<String> word_list;
 	// Used to give each word a number that will stay the same.
@@ -1043,3 +1592,24 @@ class PreviewLessonJFrame extends JFrame {
 	}
 }
 
+class MyScrollableJPanel extends JPanel implements Scrollable {
+    public Dimension getPreferredScrollableViewportSize() {
+        return getPreferredSize();
+    }
+
+    public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+       return 50;
+    }
+
+    public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+        return ((orientation == SwingConstants.VERTICAL) ? visibleRect.height : visibleRect.width) - 10;
+    }
+
+    public boolean getScrollableTracksViewportWidth() {
+        return true;
+    }
+
+    public boolean getScrollableTracksViewportHeight() {
+        return false;
+    }
+}
