@@ -9,6 +9,9 @@ You should have received a copy of the GNU General Public License along with thi
 
 
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.Transferable;
+import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.*;
 
 import javax.swing.*;
@@ -27,6 +30,8 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class TeachingTinaReadingLessonCreator {
 	private JFrame frame;
@@ -692,6 +697,7 @@ class MyFlashcardManager {
 		complete_cards_list  .setListData( makeStringArrayFromCards( complete_cards   ) );
 		incomplete_cards_list.setListData( makeStringArrayFromCards( incomplete_cards ) );
 
+
 		// Setup the headings for "Completed Cards" and "Incomplete Cards".
 		// the &nbsp; is added for using spaces to add padding to the label.
 		String spaces_padding = "&nbsp;&nbsp;&nbsp;&nbsp;";
@@ -736,7 +742,7 @@ class MyFlashcardManager {
 			@Override
 			public void valueChanged(ListSelectionEvent e) {
 				int index = incomplete_cards_list.getSelectedIndex();
-				if( index > 0 ) {
+				if( index >= 0 ) {
 					displayCard( incomplete_cards.get( index ) );
 				}
 			}
@@ -746,7 +752,7 @@ class MyFlashcardManager {
 			@Override
 			public void valueChanged(ListSelectionEvent e) {
 				int index = complete_cards_list.getSelectedIndex();
-				if( index > 0 ) {
+				if( index >= 0 ) {
 					displayCard( complete_cards.get( index ) );
 				}
 			}
@@ -764,7 +770,7 @@ class MyFlashcardManager {
 			@Override
 			public void mouseReleased(MouseEvent e) {
 				int index = incomplete_cards_list.getSelectedIndex();
-				if( index > 0 ) {
+				if( index >= 0 ) {
 					displayCard( incomplete_cards.get( index ) );
 				}
 			}
@@ -786,7 +792,7 @@ class MyFlashcardManager {
 			@Override
 			public void mouseReleased(MouseEvent e) {
 				int index = complete_cards_list.getSelectedIndex();
-				if( index > 0 ) {
+				if( index >= 0 ) {
 					displayCard( complete_cards.get( index ) );
 				}
 			}
@@ -810,12 +816,152 @@ class MyFlashcardManager {
 		frame.add( cards_content_panel,    BorderLayout.CENTER );
 		frame.add( complete_cards_panel,   BorderLayout.EAST   );
 
+		// select the first card and load it.
+		if( incomplete_cards.size() > 0 ) {
+			incomplete_cards_list.setSelectedIndex( 0 );
+			displayCard( incomplete_cards.get(0) );
+		}
+
+
+
+		// Add drag and drop for adding media to a card.
+		TransferHandler handler = new TransferHandler() {
+			/**
+			 * Constantly called during the drag and drop to check if our component supports recieving
+			 * a drag and drop of this type.
+			 * We want drag and drops of the file type.
+			 */
+			public boolean canImport( TransferHandler.TransferSupport support ) {
+				if ( support.isDataFlavorSupported( DataFlavor.javaFileListFlavor ) ) {
+					// It's a file that's being dragged over our frame.
+					// So return true because we want to import this type of drag and drop.
+					return true;
+				} else {
+					// It's not a file that's being dragged over our frame.
+					return false;
+				}
+			}
+
+			/**
+			 * Receive the files from the drag and drop.
+			 * @param support
+			 * @return
+			 */
+			public boolean importData(TransferHandler.TransferSupport support) {
+				if ( ! canImport( support ) ) {
+					return false;
+				}
+
+				Transferable t = support.getTransferable();
+
+				try {
+					List<File> file_list = ( List<File> ) t.getTransferData( DataFlavor.javaFileListFlavor );
+
+					updateCardWithMediaFiles( file_list );
+				} catch (UnsupportedFlavorException e) {
+					System.out.println( "Unsupported drag and drop item." );
+					return false;
+				} catch (IOException e) {
+					return false;
+				}
+
+				return true;
+			}
+		};
+
+		frame.setTransferHandler( handler );
+
 		// Display the frame.
 		frame.setSize(600, 500);
 		frame.setLocationRelativeTo( null );
 		frame.setDefaultCloseOperation( JFrame.DISPOSE_ON_CLOSE );
 		frame.setVisible( true );
 		frame.setExtendedState( JFrame.MAXIMIZED_BOTH );
+	}
+
+	/**
+	 * Check if the files dropped are valid media types and
+	 * add them to our card.
+	 * @param file_list
+	 */
+	public void updateCardWithMediaFiles( List<File> file_list ) {
+		if( current_card == null ) {
+			// We can't update it, because it's not been set yet.
+			return;
+		}
+
+		for( File file : file_list ) {
+			//String file_name = file.getName();
+			
+			
+			//
+			//
+			//
+			//
+			// Used full path just for testing purposes.
+			String file_name = file.getAbsolutePath();
+			
+			
+			
+			
+			/**
+			 * Matches these file extensions at the end of a string
+			 * .jpg .jpeg .png and .webm
+			 */
+			Pattern pat_image_file_extension = Pattern.compile( "\\.(jpg|jpeg|png|webm)$", Pattern.CASE_INSENSITIVE );
+
+			/**
+			 * Matches these file extensions at the end of a string
+			 * .mp3 .wav .m4a
+			 */
+			Pattern pat_audio_file_extension = Pattern.compile( "\\.(mp3|wav|m4a)$", Pattern.CASE_INSENSITIVE );
+
+			/**
+			 * Matches these file extensions at the end of a string
+			 * .timing
+			 */
+			Pattern pat_read_along_timing_file_extension = Pattern.compile( "\\.timing$", Pattern.CASE_INSENSITIVE );
+
+			Matcher match_image             = pat_image_file_extension            .matcher( file_name );
+			Matcher match_audio             = pat_audio_file_extension            .matcher( file_name );
+			Matcher match_read_along_timing = pat_read_along_timing_file_extension.matcher( file_name );
+
+			// If it's an audio file, add an audio tag.
+			if( match_audio.find() ) {
+				String str = current_card.card.getContent( ReadingLessonDeck.INDEX_AUDIO );
+				str += "<audio:\"" + file_name + "\">";
+				current_card.card.setContent( ReadingLessonDeck.INDEX_AUDIO, str );
+			}
+
+			// If it's an image, add an image tag.
+			if( match_image.find() ) {
+				String str = current_card.card.getContent( ReadingLessonDeck.INDEX_IMAGE );
+				str += "<image:\"" + file_name + "\">";
+				current_card.card.setContent( ReadingLessonDeck.INDEX_IMAGE, str );
+			}
+			
+			// If it's a sentence && it's a read-along-timing, add the read-along-timing tag
+			//if ( ReadingLessonDeck.isCardSentenceMode( current_card.card ) ) {
+				if( match_read_along_timing.find() ) {
+					String str = current_card.card.getContent( ReadingLessonDeck.INDEX_READ_ALONG_TIMINGS );
+					str += "<read-along-timing:\"" + file_name + "\">";
+					current_card.card.setContent( ReadingLessonDeck.INDEX_READ_ALONG_TIMINGS, str );
+				}
+			//}
+			
+			// Check if updating the card also updates the one in the list.
+				// not sure if that's how java stores it's variables, as pointers behind the scene.
+			
+			
+			// TODO:
+			// Make sure to copy the file into the correct media folder.
+			
+			// call the displayCard( the_updated_card )to display the new additions.
+			// change current_card to null so displayCard's check thinks it's not the same card.
+			IncompleteReadingCard updated_card = current_card;
+			current_card = null;
+			displayCard( updated_card );
+		}
 	}
 
 	/**
@@ -998,13 +1144,48 @@ class MyFlashcardManager {
 		// Display Card's images.
 		panel.add( card_image_title );
 		if( image_list.size() == 0 ) {
-			JLabel label_missing = new JLabel( "Missing image.");
+			// Display "media missing" label.
+			JLabel label_missing = new JLabel( "Missing image - drag and drop image files here to add them.");
 			label_missing.setFont( medium_font );
 			label_missing.setForeground( DARK_RED );
 			label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
 			panel.add( label_missing );
 
 			is_completed = false;
+		}
+		else {
+			// Add the images to the panel.
+			for( int i = 0; i < image_list.size(); i++ ) {
+				String image_filename = CardDBTagManager.getImageFilename( image_list.get(i) );
+				
+				// Check if the image file exists.
+				File image_file = new File( image_filename );
+				if( ! image_file.exists() ) {
+					// Display "file missing" label.
+					JLabel label_missing = new JLabel( "Error: file is missing - " + image_filename );
+					label_missing.setFont( medium_font );
+					label_missing.setForeground( DARK_RED );
+					label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+					panel.add( label_missing );
+
+					is_completed = false;
+				}
+				else {
+					// Display the image.
+					JLabel label_image = new JLabel();
+					ImageIcon icon = new ImageIcon( image_filename );
+					label_image.setIcon( icon );
+					label_image.setAlignmentX( Component.CENTER_ALIGNMENT );
+					panel.add( label_image );
+				
+					if( i < image_list.size() -1 ) {
+						// Add a blank spacer.
+						JLabel pad = new JLabel("  ");
+						pad.setFont(small_font);
+						panel.add( pad );
+					}
+				}
+			}
 		}
 
 		panel.add( padding_label_2 );
@@ -1014,13 +1195,45 @@ class MyFlashcardManager {
 		// Display Card's audio.
 		panel.add( card_audio_title );
 		if( audio_list.size() == 0 ) {
-			JLabel label_missing = new JLabel( "Missing audio.");
+			// Display "media missing" label.
+			JLabel label_missing = new JLabel( "Missing audio - drag and drop audio files here to add them.");
 			label_missing.setFont( medium_font );
 			label_missing.setForeground( DARK_RED );
 			label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
 			panel.add( label_missing );
 
 			is_completed = false;
+		}
+		else {
+			// Add the audio to the panel.
+			for( int i = 0; i < audio_list.size(); i++ ) {
+				String audio_filename = CardDBTagManager.getAudioFilename(audio_list.get( i ) );
+				// Check if the image file exists.
+				File audio_file = new File( audio_filename );
+				if( ! audio_file.exists() ) {
+					// Display "file missing" label.
+					JLabel label_missing = new JLabel( "Error: file is missing - " + audio_filename );
+					label_missing.setFont( medium_font );
+					label_missing.setForeground( DARK_RED );
+					label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+					panel.add( label_missing );
+
+					is_completed = false;
+				}
+				else {
+					// Add the audio player button.
+					JButton audio_button = new JButton( audio_filename );
+					audio_button.setAlignmentX( Component.CENTER_ALIGNMENT );
+					panel.add( audio_button );
+				
+					if( i < audio_list.size() -1 ) {
+						// Add a blank spacer.
+						JLabel pad = new JLabel("  ");
+						pad.setFont(small_font);
+						panel.add( pad );
+					}
+				}
+			}
 		}
 
 		panel.add( padding_label_3 );
@@ -1028,16 +1241,30 @@ class MyFlashcardManager {
 
 
 		// Display Card's read along timings.
-		panel.add( card_read_along_timings_title );
-		if( read_along_timings_list.size() == 0 ) {
-			JLabel label_missing = new JLabel( "Missing read along timings.");
-			label_missing.setFont( medium_font );
-			label_missing.setForeground( DARK_RED );
-			label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
-			panel.add( label_missing );
+		//if( ReadingLessonDeck.isCardSentenceMode( current_card ) ) {
+			panel.add( card_read_along_timings_title );
+			if( read_along_timings_list.size() == 0 ) {
+				// Display "media missing" label.
+				JLabel label_missing = new JLabel( "Missing read along timings - drag and drop timings files here to add them.");
+				label_missing.setFont( medium_font );
+				label_missing.setForeground( DARK_RED );
+				label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+				
+				JButton button_rat_creator = new JButton( "Create read along timing" );
+				button_rat_creator.setAlignmentX( Component.CENTER_ALIGNMENT );
+				panel.add( label_missing );
+				panel.add( button_rat_creator );
 
-			is_completed = false;
-		}
+				is_completed = false;
+			}
+		//}
+		//else {
+			for( int i = 0; i < read_along_timings_list.size(); i++ ) {
+				String filename = CardDBTagManager.getAudioFilename( read_along_timings_list.get( i ) );
+				JButton button_rat_creator = new JButton( "Preview read-along-timing: " + filename );
+				button_rat_creator.setAlignmentX( Component.CENTER_ALIGNMENT );
+			}
+		//}
 
 
 		// Update the heading to show if the card is completed or not.
@@ -1052,7 +1279,7 @@ class MyFlashcardManager {
 			Border border = BorderFactory.createLineBorder( DARK_RED, BORDER_THICKNESS );
 			card_completion_title.setBorder( border );
 
-			card_completion_title.setText( "    Card has missing media.    " );
+			card_completion_title.setText( "    Card has missing media!   " );
 			card_completion_title.setBackground( LIGHT_RED );
 			card_completion_title.setOpaque( true );
 		}
