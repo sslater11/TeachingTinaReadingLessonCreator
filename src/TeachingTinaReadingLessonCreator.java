@@ -14,6 +14,11 @@ import java.awt.datatransfer.Transferable;
 import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.*;
 
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Clip;
+import javax.sound.sampled.LineUnavailableException;
+import javax.sound.sampled.UnsupportedAudioFileException;
 import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.text.*;
@@ -24,9 +29,11 @@ import javax.swing.event.*;
 import javax.swing.text.DefaultEditorKit.*;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
 import java.util.List;
@@ -407,7 +414,6 @@ public class TeachingTinaReadingLessonCreator {
 	}
 
 	private void loadLessons() {
-		// TODO: Write the code to load the deck settings, if we need it?
 		DeckSettings deck_settings = null;
 		
 		// Get a list of all lesson files
@@ -608,14 +614,14 @@ class IncompleteReadingCard {
 	public static boolean doesTagsFileExist( String tag ) {
 		// Extract the filename.
 		String file_name = null;
-		file_name = CardDBTagManager.getAudioFilename( tag );
+		file_name = CardDBTagManager.getAudioFilepath( tag );
 
 		if( file_name == null ) {
-			file_name = CardDBTagManager.getImageFilename( tag );
+			file_name = CardDBTagManager.getImageFilepath( tag );
 		}
 
 		if( file_name == null ) {
-			file_name = CardDBTagManager.getReadAlongTimingsFilename( tag );
+			file_name = CardDBTagManager.getReadAlongTimingsFilepath( tag );
 		}
 
 		// The tag passed wasn't recognised, so return false.
@@ -667,6 +673,24 @@ class MyFlashcardManager {
 
 	// Used so that our sentences get truncated when we show them in our JList.
 	int MAXIMUM_JLIST_STRING_LENGTH = 30;
+
+	/**
+	 * Matches these file extensions at the end of a string
+	 * .jpg .jpeg .png and .webm
+	 */
+	public static Pattern pattern_image_file_extension = Pattern.compile( "\\.(jpg|jpeg|png|webm)$", Pattern.CASE_INSENSITIVE );
+
+	/**
+	 * Matches these file extensions at the end of a string
+	 * .mp3 .wav .m4a
+	 */
+	public static Pattern pattern_audio_file_extension = Pattern.compile( "\\.(mp3|wav|m4a)$", Pattern.CASE_INSENSITIVE );
+
+	/**
+	 * Matches these file extensions at the end of a string
+	 * .timing
+	 */
+	public static Pattern pattern_read_along_timing_file_extension = Pattern.compile( "\\.timing$", Pattern.CASE_INSENSITIVE );
 
 	MyFlashcardManager() {
 		loadCards();
@@ -903,28 +927,9 @@ class MyFlashcardManager {
 			
 			
 			
-			
-			/**
-			 * Matches these file extensions at the end of a string
-			 * .jpg .jpeg .png and .webm
-			 */
-			Pattern pat_image_file_extension = Pattern.compile( "\\.(jpg|jpeg|png|webm)$", Pattern.CASE_INSENSITIVE );
-
-			/**
-			 * Matches these file extensions at the end of a string
-			 * .mp3 .wav .m4a
-			 */
-			Pattern pat_audio_file_extension = Pattern.compile( "\\.(mp3|wav|m4a)$", Pattern.CASE_INSENSITIVE );
-
-			/**
-			 * Matches these file extensions at the end of a string
-			 * .timing
-			 */
-			Pattern pat_read_along_timing_file_extension = Pattern.compile( "\\.timing$", Pattern.CASE_INSENSITIVE );
-
-			Matcher match_image             = pat_image_file_extension            .matcher( file_name );
-			Matcher match_audio             = pat_audio_file_extension            .matcher( file_name );
-			Matcher match_read_along_timing = pat_read_along_timing_file_extension.matcher( file_name );
+			Matcher match_image             = pattern_image_file_extension            .matcher( file_name );
+			Matcher match_audio             = pattern_audio_file_extension            .matcher( file_name );
+			Matcher match_read_along_timing = pattern_read_along_timing_file_extension.matcher( file_name );
 
 			// If it's an audio file, add an audio tag.
 			if( match_audio.find() ) {
@@ -1047,26 +1052,30 @@ class MyFlashcardManager {
 		return card_front_list.toArray( new String[ card_front_list.size() ] );
 	}
 
+	public IncompleteReadingCard getCurrentCard() {
+		return this.current_card;
+	}
+
 	/**
 	 * Draw the card on the screen.
 	 * @param card
 	 */
 	public void displayCard( IncompleteReadingCard card ) {
 		// Stop this method from being ran when we are already displaying the card.
-		if( card == current_card ) {
+		if( card == this.current_card ) {
 			return;
 		} else {
-			current_card = card;
+			this.current_card = card;
 		}
 
 		// Used later to check if we should display the "Completed" or "Incomplete" heading at the top of the card display.
 		boolean is_completed = true;
 
 		// Initial setup for displaying the card on the screen.
-		ArrayList<String> text_list  = ReadingLessonDeck.getCardText ( card.card );
-		ArrayList<String> image_list = ReadingLessonDeck.getCardImage( card.card );
-		ArrayList<String> audio_list = ReadingLessonDeck.getCardAudio( card.card );
-		ArrayList<String> read_along_timings_list = ReadingLessonDeck.getCardReadAlongTimings( card.card );
+		ArrayList<String> text_list  = ReadingLessonDeck.getCardText ( getCurrentCard().card );
+		ArrayList<String> image_list = ReadingLessonDeck.getCardImage( getCurrentCard().card );
+		ArrayList<String> audio_list = ReadingLessonDeck.getCardAudio( getCurrentCard().card );
+		ArrayList<String> read_along_timings_list = ReadingLessonDeck.getCardReadAlongTimings( getCurrentCard().card );
 
 		MyScrollableJPanel panel = new MyScrollableJPanel();
 		panel.setLayout( new BoxLayout(panel, BoxLayout.Y_AXIS) );
@@ -1156,7 +1165,7 @@ class MyFlashcardManager {
 		else {
 			// Add the images to the panel.
 			for( int i = 0; i < image_list.size(); i++ ) {
-				String image_filename = CardDBTagManager.getImageFilename( image_list.get(i) );
+				String image_filename = CardDBTagManager.getImageFilepath( image_list.get(i) );
 				
 				// Check if the image file exists.
 				File image_file = new File( image_filename );
@@ -1207,7 +1216,7 @@ class MyFlashcardManager {
 		else {
 			// Add the audio to the panel.
 			for( int i = 0; i < audio_list.size(); i++ ) {
-				String audio_filename = CardDBTagManager.getAudioFilename(audio_list.get( i ) );
+				String audio_filename = CardDBTagManager.getAudioFilepath(audio_list.get( i ) );
 				// Check if the image file exists.
 				File audio_file = new File( audio_filename );
 				if( ! audio_file.exists() ) {
@@ -1251,6 +1260,27 @@ class MyFlashcardManager {
 				label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
 				
 				JButton button_rat_creator = new JButton( "Create read along timing" );
+				button_rat_creator.addActionListener( new ActionListener() {
+					public void actionPerformed( ActionEvent event ) {
+						// Get the sentence from the card and turn it into a list of words that we can pass.
+						ArrayList<String> words = TeachingTinaReadingLessonCreator.getWordsListFromText( ReadingLessonDeck.getCardText( getCurrentCard().card ).get(0) );
+
+						ArrayList<String> audio_list = ReadingLessonDeck.getCardAudio( getCurrentCard().card );
+						String audio_filename = CardDBTagManager.getAudioFilepath(audio_list.get( 0 ) );
+						// Remove the file extension from the audio file
+						// and put the timings file extension on the end.
+						Matcher match_audio = pattern_audio_file_extension.matcher( audio_filename );
+						match_audio.find();
+						String read_along_timings_filename = audio_filename.substring( 0, match_audio.start() );
+						read_along_timings_filename += ".timing";
+
+						File timings_file = new File( read_along_timings_filename );
+						File audio_file   = new File( audio_filename );
+
+						TeachingTinaReadAlongTimingCreator timing_creator = new TeachingTinaReadAlongTimingCreator( words, audio_file, timings_file );
+					}
+				});
+
 				button_rat_creator.setAlignmentX( Component.CENTER_ALIGNMENT );
 				panel.add( label_missing );
 				panel.add( button_rat_creator );
@@ -1260,7 +1290,7 @@ class MyFlashcardManager {
 		//}
 		//else {
 			for( int i = 0; i < read_along_timings_list.size(); i++ ) {
-				String filename = CardDBTagManager.getAudioFilename( read_along_timings_list.get( i ) );
+				String filename = CardDBTagManager.getAudioFilepath( read_along_timings_list.get( i ) );
 				JButton button_rat_creator = new JButton( "Preview read-along-timing: " + filename );
 				button_rat_creator.setAlignmentX( Component.CENTER_ALIGNMENT );
 			}
@@ -1299,7 +1329,12 @@ class MyFlashcardManager {
 		frame.validate();
 	}
 }
-
+/**
+ * Manage lists of words for the two lists at each side of the JFrame.
+ * Most common words list and the previous lessons words list.
+ * @author simon
+ *
+ */
 class WordList {
 	private ArrayList<String> word_list;
 	// Used to give each word a number that will stay the same.
@@ -1800,22 +1835,17 @@ class PreviewLessonJFrame extends JFrame {
 	class CloseWindowActionListener implements KeyListener {
 
 		@Override
-		public void keyTyped(KeyEvent e) {
-			// TODO Auto-generated method stub
-			
-		}
-
-		@Override
 		public void keyPressed(KeyEvent e) {
-			
+			// Close this.
 			dispose();
 		}
 
 		@Override
-		public void keyReleased(KeyEvent e) {
-			// TODO Auto-generated method stub
-			
-		}
+		public void keyTyped(KeyEvent e) { }
+
+
+		@Override
+		public void keyReleased(KeyEvent e) { }
 	}
 }
 
@@ -1840,3 +1870,5 @@ class MyScrollableJPanel extends JPanel implements Scrollable {
         return false;
     }
 }
+
+
