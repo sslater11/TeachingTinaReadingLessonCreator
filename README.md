@@ -9,8 +9,7 @@ The methodology combines Spaced Repetition with Deep Learning.
 You can google spaced repetition to save me from explaining what that is. The most popular example is the flashcard app Anki which is renowned for helping medical students, programmers, language learners and more.
 The Deep Learning comes from the book The Talent Code, and my own experiences with learning and teaching.
 
-Several flashcards will be shown to the user, and they must answer each card correctly 5 times. If they get it wrong, then they must get it right 5 times.
-By doing this we focus on learning just a few small cards in one day. The next day they will be asked these same questions, then again at a later date, and so on. If at any point they fail a flashcard, no matter how well they know it, they must answer it 5 times correctly and it's now treated like a new card, so they'll see it often over the next few days and weeks.
+Several flashcards will be shown to the user, and they must answer each card correctly 5 times in a row. If they get it wrong, then they must again try to answer it correctly 5 times in a row. By doing this we focus on learning just a few small cards in one day. The next day they will be asked these same questions, then again at a later date, and so on. If at any point they fail a flashcard, no matter how well they know it, they must answer it 5 times correctly and it's now treated like a new card, so they'll see it often over the next few days and weeks.
 
 # The Reading Lessons
 Each lesson is incremental with the goal of learning the most common words in the English language, along with the sounds that letter pairs can make.
@@ -38,6 +37,15 @@ By writing any sentence, we will likely add the most common words in the English
 
 # Dependencies / Source code
 To compile this, you will need to link the library LibTeachingTinaDBManager. I do this by having the folder libteachingtinadbmanager inside the src/ folder.
+
+# Compiling
+To compile, read the dependencies section of this ReadMe.
+Load the project using Eclipse and it should compile. It may give a warning that there's errors, just ignore that and tell it to compile.
+
+## The compiler error.
+The compiler errors are because of android based libraries used in the LibTeachingTinaDBManager. The library used android's packages to locate files, and since we don't have those libraries on PC, it will tell us there's a problem compiling.
+
+Notice there is a make file. This is purely for my own purposes as it compiles by calling a headless version of Eclipse. It's only there to make it easier for me to compile using Emacs, as it's better than Eclipse. Why use Eclipse to compile? Well because it's easier than setting up and learning about Ant, Maven, or anything like that, and because a simple Makefile calling javac doesn't work. I get a compiler error when calling javac, because of the android dependencies. Eclipse seems to be file ignoring these, hence it's the easiest solution for me at this time.
 
 # Credits
 Me. It's all me, baby. Well so far.
