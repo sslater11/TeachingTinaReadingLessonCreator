@@ -14,9 +14,6 @@ import java.awt.datatransfer.Transferable;
 import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.*;
 
-import javax.sound.sampled.AudioInputStream;
-import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.UnsupportedAudioFileException;
 import javax.swing.*;
@@ -29,12 +26,15 @@ import javax.swing.event.*;
 import javax.swing.text.DefaultEditorKit.*;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -79,11 +79,14 @@ public class TeachingTinaReadingLessonCreator {
 
 		
 		// Create the labels
-		JLabel lbl_hint1 = new JLabel("<html><div style='text-align: center;'>" + "<b>Red</b> = A new word." + "</div></html>" );
+		JLabel lbl_hint1 = new JLabel("<html><div style='text-align: center; color: #ff0000;'>" + "<b>Red</b> = A new word." + "</div></html>" );
 		lbl_hint1.setFont( small_font );
 
 		JLabel lbl_hint2 = new JLabel("<html><div style='text-align: center;'>" + "<b>Black</b> = A word in previous lesson file." + "</div></html>" );
 		lbl_hint2.setFont( small_font );
+		
+		JLabel lbl_hint3 = new JLabel("<html><div style='text-align: center;'>" + "All tabs will be changed to 4 spaces." + "</div></html>" );
+		lbl_hint3.setFont( small_font );
 
 		this.lbl_reading_level = new JLabel( "Reading Level is at: " );
 		this.lbl_reading_level.setFont( small_font );
@@ -140,9 +143,9 @@ public class TeachingTinaReadingLessonCreator {
 		create_lesson.addActionListener( create_lesson_action_listener );
 		create_lesson.setFont( small_font );
 
-		JButton flashcard_manager_button = new JButton( "Flashcard Manager / Fix Incomplete Cards" );
+		JButton flashcard_manager_button = new JButton( "Flashcard Designer" );
 		flashcard_manager_button.addActionListener( flashcard_manager_action_listener );
-		flashcard_manager_button.setFont( small_font );
+		flashcard_manager_button.setFont( large_font );
 
 		// Setup the toolbar panel.
 		font_size_combo_box = new JComboBox<String>(FONT_SIZES);
@@ -164,14 +167,17 @@ public class TeachingTinaReadingLessonCreator {
 
 		JPanel hint_1_panel = new JPanel( new FlowLayout(FlowLayout.CENTER) );
 		JPanel hint_2_panel = new JPanel( new FlowLayout(FlowLayout.CENTER) );
+		JPanel hint_3_panel = new JPanel( new FlowLayout(FlowLayout.CENTER) );
 		hint_1_panel.add( lbl_hint1, BorderLayout.CENTER );
 		hint_2_panel.add( lbl_hint2, BorderLayout.CENTER );
+		hint_3_panel.add( lbl_hint3, BorderLayout.CENTER );
 
 		JPanel toolbar_panel = new JPanel();
 		toolbar_panel.setLayout( new BoxLayout(toolbar_panel, BoxLayout.PAGE_AXIS) );
 		toolbar_panel.add( controls_panel );
 		toolbar_panel.add( hint_1_panel );
 		toolbar_panel.add( hint_2_panel );
+		toolbar_panel.add( hint_3_panel );
 		
 		
 		// Setup the most common words panel.
@@ -346,7 +352,6 @@ public class TeachingTinaReadingLessonCreator {
 			/**
 			 * This will automatically change the colour for the words as we type in the text editor.
 			 */
-			final StyleContext style_context = StyleContext.getDefaultStyleContext();
 	
 			DefaultStyledDocument doc = new DefaultStyledDocument() {
 				public void insertString (int offset, String str, AttributeSet a) throws BadLocationException {
@@ -388,6 +393,7 @@ public class TeachingTinaReadingLessonCreator {
 		String text = "";
 		try {
 			text = doc.getText( 0, doc.getLength() );
+			text = text.replaceAll("\t", "    ");
 		} catch (BadLocationException e) {
 			e.printStackTrace();
 		}
@@ -490,8 +496,6 @@ public class TeachingTinaReadingLessonCreator {
 	private class PreviewLessonActionListener implements ActionListener {
 
 		public void actionPerformed(ActionEvent e) {
-			ArrayList<String> list = getWordsListFromEditor();
-			
 			ReadingLessonCreator deck = new ReadingLessonCreator( getPreviousLesson(), getTextFromEditor() );
 
 			if( deck.hasNewWords() ) {
@@ -555,93 +559,417 @@ public class TeachingTinaReadingLessonCreator {
  * It allows us to check if the card is missing any media.
  */
 class IncompleteReadingCard {
-	Card card;
+	public Card card;
 	String db_line;
+	CardsGroup cards_group;
 	int line_number;
 	File db_file;
 	
+	// Populate these with the cards content for easy displaying.
+	ArrayList<String> text_list;
+	ArrayList<String> image_list;
+	ArrayList<String> audio_list;
+	ArrayList<String> read_along_timings_list;
+	
+	/*
+	 * These lists will either be the same size as the lists stored in the card, or they'll be larger for adding new content.
+	 */
+	public ArrayList<String> updated_text_list;
+	public ArrayList<String> updated_read_along_timings_list;
+	public ArrayList<String> updated_audio_list;
+	public ArrayList<String> updated_image_list;
+	
 	IncompleteReadingCard( String db_line, int line_number, CardsGroup cards_group, File db_file ) {
+		initAndReset( db_line, line_number, cards_group, db_file );
+	}
+	
+	/**
+	 * Used to initialize or reset our card whenever we update it.
+	 * @param db_line
+	 * @param line_number
+	 * @param cards_group
+	 * @param db_file
+	 */
+	public void initAndReset( String db_line, int line_number, CardsGroup cards_group, File db_file ) {
 		this.card        = new Card( db_line, null, cards_group );
 		this.db_line     = db_line;
 		this.line_number = line_number;
 		this.db_file     = db_file;
+		this.cards_group = cards_group;
+		
+		text_list  = ReadingLessonDeck.getCardText ( this.card );
+		image_list = convertImageListTagsToFilePaths( ReadingLessonDeck.getCardImage( this.card ) );
+		audio_list = convertAudioListTagsToFilePaths( ReadingLessonDeck.getCardAudio( this.card ) );
+		read_along_timings_list = convertReadAlongTimingsListTagsToFilePaths( ReadingLessonDeck.getCardReadAlongTimings( this.card ) );
+		
+		resetAllUpdatedLists();
 	}
 	
-	public Boolean isCardIncomplete() {
-		// Check if the card is a sentence to see if it needs a timings tag.
-		if ( ReadingLessonDeck.isCardSentenceMode( card ) ) {
-			if( ! CardDBTagManager.hasReadAlongTimingsTag( this.db_line ) ) {
-				return true;
-			}
+	public String getUpdatedDatabaseLine() {
+		String result = "";
+		
+		String[] elements = db_line.split( "\t" );
+		
+		// Get the database line upto, and including the card's word/sound/sentence.
+		result = elements[0] + "\t" +
+		         elements[1] + "\t" +
+		         elements[2] + "\t" +
+		         elements[3] + "\t" +
+		         elements[4] + "\t" +
+		         elements[5] + "\t" +
+		         elements[6];
+		
+		// Get all the media tags
+		result += "\t";
+		for(int i = 0; i < updated_audio_list.size(); i++ ) {
+			String path = MyFlashcardManager.getMediaUpdatedFilePath( audio_list, updated_audio_list, i );
+			path = path.replaceAll( TextEditorDBManager.getDirectory(), "" );
+			result += "<audio:\"" + path + "\">";
 		}
 		
-		// Check if the card is any sound, as these don't have any image tag to check for.
-		if(
-		    ( card.group.getGroupName() == TextEditorDBManager.CONSONANT_PAIRS ) ||
-		    ( card.group.getGroupName() == TextEditorDBManager.VOWEL_CONSONANT_PAIRS ) ||
-		    ( card.group.getGroupName() == TextEditorDBManager.CONSONANT_GROUPS ) ||
-		    ( card.group.getGroupName() == TextEditorDBManager.DOUBLE_CONSONANT_VOWEL_PAIRS ) ||
-		    ( card.group.getGroupName() == TextEditorDBManager.DOUBLE_VOWEL_CONSONANT_PAIRS ) ||
-		    ( card.group.getGroupName() == TextEditorDBManager.VOWEL_PAIRS )
-		){
-			if( ! CardDBTagManager.hasAudioTag( this.db_line ) ) {
-				return true;
-			}
-			else {
-				return false;
-			}
-			
+		result += "\t";
+		for(int i = 0; i < updated_image_list.size(); i++ ) {
+			String path = MyFlashcardManager.getMediaUpdatedFilePath( image_list, updated_image_list, i );
+			path = path.replaceAll( TextEditorDBManager.getDirectory(), "" );
+			result += "<image:\"" + path + "\">";
 		}
 
-		// It's a word or a sentence, so check for missing audio and images.
-		if( ! CardDBTagManager.hasAudioTag( this.db_line ) ||
-		    ! CardDBTagManager.hasImageTag( this.db_line ) )
-		{
+		result += "\t";
+		for(int i = 0; i < updated_read_along_timings_list.size(); i++ ) {
+			String path = MyFlashcardManager.getMediaUpdatedFilePath( read_along_timings_list, updated_read_along_timings_list, i );
+			path = path.replaceAll( TextEditorDBManager.getDirectory(), "" );
+			result += "<read-along-timing:\"" + path + "\">";
+		}
+		
+		
+		return result;
+	}
+	
+	public void saveToDatabase() {
+		
+		String updated_db_line = getUpdatedDatabaseLine();
+		
+		// Read the database file, and change the line that matches our card.
+		ArrayList<String> file_lines_list = new ArrayList<String>();
+		try( BufferedReader br = new BufferedReader( new FileReader( db_file ) ) ) {
+			String line = "";
+			int line_count = -1;
+			while( (line = br.readLine()) != null ){
+				line_count++;
+				if( line_count == line_number ) {
+					file_lines_list.add( updated_db_line );
+				} else {
+					file_lines_list.add( line );
+				}
+			}
+			
+			
+			// Write to a new database file.
+			File temp_db_file = new File( db_file.getPath() + ".temp" );
+			try {
+				FileWriter fw = new FileWriter( temp_db_file );
+				for( String output_line : file_lines_list) {
+					fw.write( output_line + "\n" );
+				}
+				fw.close();
+				
+				
+				// Move the new database file to the filename of our original database file.
+				Files.move( temp_db_file.toPath(), db_file.toPath(), StandardCopyOption.REPLACE_EXISTING );
+				
+				
+				// Update and reset our stored card, just for consistency.
+				initAndReset( updated_db_line, this.line_number, this.cards_group, this.db_file );
+				
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+			
+		} catch( IOException e ) {
+			e.printStackTrace();
+		}
+	}
+	
+	
+	/**
+	 * Will make the updated lists the same length as their original list and will set their data to null.
+		updated_text_list
+		updated_audio_list
+		updated_image_list
+		updated_read_along_timings_list
+	 */
+	public void resetAllUpdatedLists() {
+		updated_text_list  = new ArrayList<String>();
+		updated_audio_list = new ArrayList<String>();
+		updated_image_list = new ArrayList<String>();
+		updated_read_along_timings_list = new ArrayList<String> ();
+		
+		// Populate the updated lists with null values to show that the current card has no new updated fields.
+		for( int i = 0; i < text_list.size(); i++ ) {
+			updated_text_list.add( null );
+		}
+		for( int i = 0; i < read_along_timings_list.size(); i++ ) {
+			updated_read_along_timings_list.add( null );
+		}
+		for( int i = 0; i < audio_list.size(); i++ ) {
+			updated_audio_list.add( null );
+		}
+		for( int i = 0; i < image_list.size(); i++ ) {
+			updated_image_list.add( null );
+		}
+	}
+	
+	public boolean isCardComplete() {
+		if ( ReadingLessonDeck.isCardASentence( card ) ) {
+			// Check if our card has audio tags.
+			if( ! CardDBTagManager.hasAudioTag( this.db_line ) ) {
+				// No Audio tags.
+				return false;
+			}
+
+			// Check if our card has images tags.
+			else if( ! CardDBTagManager.hasImageTag( this.db_line ) ) {
+				// No Image tags.
+				return false;
+			}
+
+			// Check if our card has read_along timings tags.
+			else if( ! CardDBTagManager.hasReadAlongTimingsTag( this.db_line ) ) {
+				// No Read Along Timings tags.
+				return false;
+			}
+
+			// Check if all of the tags have their files.
+			ArrayList<String> image_list = getImageFilePaths();
+			ArrayList<String> audio_list = getAudioFilePaths();
+			ArrayList<String> read_along_timings_list = getReadAlongTimingsFilePaths();
+
+			if( doAllFilesExistInList(              image_list ) &&
+			    doAllFilesExistInList(              audio_list ) &&
+			    doAllFilesExistInList( read_along_timings_list ) )
+			{
+				return true;
+			} else {
+				return false;
+			}
+		}
+
+		else if ( ReadingLessonDeck.isCardAWord( card ) ) {
+			// Check if our card has audio tags.
+			if( ! CardDBTagManager.hasAudioTag( this.db_line ) ) {
+				// No Audio tags.
+				return false;
+			}
+
+			// Check if our card has images tags.
+			else if( ! CardDBTagManager.hasImageTag( this.db_line ) ) {
+				// No Image tags.
+				return false;
+			}
+
+			// Check if all of the tags have their files.
+			ArrayList<String> image_list = getImageFilePaths();
+			ArrayList<String> audio_list = getAudioFilePaths();
+
+			if( doAllFilesExistInList( image_list ) &&
+			    doAllFilesExistInList( audio_list ) )
+			{
+				return true;
+			} else {
+				return false;
+			}
+		}
+
+		else if ( ReadingLessonDeck.isCardASound( card ) ) {
+			// Check if our card has audio tags.
+			if( ! CardDBTagManager.hasAudioTag( this.db_line ) ) {
+				// No Audio tags.
+				return false;
+			}
+
+			// Check if all of the tags have their files.
+			if( doAllFilesExistInList( image_list ) ) {
+				return true;
+			} else {
+				return false;
+			}
+		}
+
+		else {
+			return false;
+		}
+	}
+
+	/**
+	 * Check if a file exists or not.
+	 */
+	public static boolean doesFileExist( String filename ) {
+		File media_file = new File( filename );
+		if( media_file.exists() ) {
 			return true;
-			/*
-			 * TODO:
-			 * update this. make it check the audio, image, and readalongtimings tags for whether their files exist.
-			 */
-			//if( ! IncompleteReadingCard.doesTagsFileExist( line ) )
-			//{
-			//	return true;
-			//}
 		} else {
 			return false;
 		}
 	}
 
-	public static boolean doesTagsFileExist( String tag ) {
-		// Extract the filename.
-		String file_name = null;
-		file_name = CardDBTagManager.getAudioFilepath( tag );
-
-		if( file_name == null ) {
-			file_name = CardDBTagManager.getImageFilepath( tag );
-		}
-
-		if( file_name == null ) {
-			file_name = CardDBTagManager.getReadAlongTimingsFilepath( tag );
-		}
-
-		// The tag passed wasn't recognised, so return false.
-		if( file_name == null ) {
+	/** Check if all of the files in a list of string filepaths exist. */
+	public static boolean doAllFilesExistInList( ArrayList<String> all_filenames ) {
+		if( all_filenames.size() == 0 ) {
 			return false;
 		}
 		else {
-			// Check if the file exists.
-			File temp = new File( file_name );
-			return temp.exists();
+			for( int i = 0; i < all_filenames.size(); i++ ) {
+				if( ! doesFileExist( all_filenames.get(i) ) ) {
+					return false;
+				}
+			}
 		}
+
+		return true;
+	}
+
+	public void addAudio( String file_path ) {
+		updated_audio_list.add( file_path );
+	}
+	public void addImage( String file_path ) {
+		updated_image_list.add( file_path );
+	}
+	
+	public void addReadAlongTimings( String file_path ) {
+		updated_read_along_timings_list.add( file_path );
+	}
+	
+	/*
+	 * Make the updated card just an empty string .
+	 * The empty string is a way of shoeing that we
+	 * don't want that image when we save the updated card.
+	 */
+	public void removeAudio( int index ) {
+		updated_audio_list.set( index, "" );
+	}
+	
+	public void setImage( int index, String file_path ) {
+		if( index >= image_list.size() ) {
+			updated_image_list.add( file_path );
+		} else {
+			updated_image_list.set( index, file_path );
+		}
+	}
+	
+	public void setAudio( int index, String file_path ) {
+		if( index >= audio_list.size() ) {
+			updated_audio_list.add( file_path );
+		} else {
+			updated_audio_list.set( index, file_path );
+		}
+	}
+	
+	public void setText( int index, String file_path ) {
+		if( index >= text_list.size() ) {
+			updated_text_list.add( file_path );
+		} else {
+			updated_text_list.set( index, file_path );
+		}
+	}
+	
+	public void setReadAlongTimings( int index, String file_path ) {
+		if( index >= read_along_timings_list.size() ) {
+			updated_read_along_timings_list.add( file_path );
+		} else {
+			updated_read_along_timings_list.set( index, file_path );
+		}
+	}
+	
+	
+	public ArrayList<String> convertImageListTagsToFilePaths( ArrayList<String> original_list ) {
+		ArrayList<String> filepaths_list = new ArrayList<String>();
+
+		for( int i = 0; i < original_list.size(); i++ ) {
+			String filename = (String) CardDBTagManager.getImageFilename( original_list.get(i) );
+			filepaths_list.add( TextEditorDBManager.getDirectory() + filename );
+			
+		}
+		
+		return filepaths_list;
+	}
+
+	public ArrayList<String> convertAudioListTagsToFilePaths( ArrayList<String> original_list ) {
+		ArrayList<String> filepaths_list = new ArrayList<String>();
+
+		for( int i = 0; i < original_list.size(); i++ ) {
+			String filename = (String) CardDBTagManager.getAudioFilename( original_list.get(i) );
+			filepaths_list.add( TextEditorDBManager.getDirectory() + filename );
+			
+		}
+		
+		return filepaths_list;
+	}
+	public ArrayList<String> convertReadAlongTimingsListTagsToFilePaths( ArrayList<String> original_list ) {
+		ArrayList<String> filepaths_list = new ArrayList<String>();
+
+		for( int i = 0; i < original_list.size(); i++ ) {
+			String filename = (String) CardDBTagManager.getReadAlongTimingsFilename( original_list.get(i) );
+			filepaths_list.add( TextEditorDBManager.getDirectory() + filename );
+			
+		}
+		
+		return filepaths_list;
+	}
+	
+	/**
+	 * Will compare 2 lists and will return a merged list where data from the updated list is preferred over the original list's elements..
+	 * @param original_list
+	 * @param updated_list
+	 * @return
+	 */
+	private ArrayList<String> __getUpdatedMergedList( ArrayList<String> original_list, ArrayList<String> updated_list ) {
+		ArrayList<String> list = new ArrayList<String>();
+		// Scan through each audio in the list
+		for( int i = 0; i < original_list.size(); i++ ) {
+			if( updated_list.get( i ) == null ) {
+				// Use original
+				list.add( original_list.get(i) );
+			} else {
+				// Use updated version.
+				String filename = updated_list.get(i);
+				list.add( filename );
+			}
+		}
+		
+		// Scan through the remaining cards in the updated list.
+		for( int i = original_list.size(); i < updated_list.size(); i++ ) {
+			String filename = updated_list.get(i);
+			list.add( filename );
+		}
+		
+		return list;
+	}
+	
+	public ArrayList<String> getImageFilePaths() {
+		return __getUpdatedMergedList( this.image_list, this.updated_image_list );
+	}
+	public ArrayList<String> getAudioFilePaths() {
+		return __getUpdatedMergedList( this.audio_list, this.updated_audio_list );
+	}
+	public ArrayList<String> getReadAlongTimingsFilePaths() {
+		return __getUpdatedMergedList( this.read_along_timings_list, this.updated_read_along_timings_list );
+	}
+	public ArrayList<String> getText() {
+		return __getUpdatedMergedList( this.text_list, this.updated_text_list );
 	}
 }
 
+/**
+ * The window(JFrame) to edit and create flashcards.
+ *
+ */
 class MyFlashcardManager {
 	ArrayList<IncompleteReadingCard> incomplete_cards;
 	ArrayList<IncompleteReadingCard> complete_cards;
 
 	// Used to know which card we are displaying on the screen.
 	IncompleteReadingCard current_card;
+	boolean is_current_card_in_the_completed_list;
 
 	// Frame components
 	JFrame frame;
@@ -691,6 +1019,27 @@ class MyFlashcardManager {
 	 * .timing
 	 */
 	public static Pattern pattern_read_along_timing_file_extension = Pattern.compile( "\\.timing$", Pattern.CASE_INSENSITIVE );
+
+	class ReadAlongTimingsActionListener implements ActionListener {
+		MyFlashcardManager main_app;
+		String audio_file_path;
+		String timings_file_path;
+		public ReadAlongTimingsActionListener( MyFlashcardManager main_app, String audio_file_path, String timings_file_path ) {
+			this.main_app = main_app;
+			this.audio_file_path = audio_file_path;
+			this.timings_file_path = timings_file_path;
+		}
+		
+		public void actionPerformed( ActionEvent event ) {
+			// Get the sentence from the card and turn it into a list of words that we can pass.
+			ArrayList<String> words = TeachingTinaReadingLessonCreator.getWordsListFromText( ReadingLessonDeck.getCardText( getCurrentCard().card ).get(0) );
+			
+			File audio_file   = new File( audio_file_path );
+			File timings_file = new File( timings_file_path );
+			
+			TeachingTinaReadAlongTimingCreator timing_creator = new TeachingTinaReadAlongTimingCreator( words, audio_file, timings_file, this.main_app );
+		}
+	}
 
 	MyFlashcardManager() {
 		loadCards();
@@ -767,7 +1116,8 @@ class MyFlashcardManager {
 			public void valueChanged(ListSelectionEvent e) {
 				int index = incomplete_cards_list.getSelectedIndex();
 				if( index >= 0 ) {
-					displayCard( incomplete_cards.get( index ) );
+					setIsCurrentCardInTheCompletedList( false );
+					displayCard( incomplete_cards.get( index ), false );
 				}
 			}
 		});
@@ -777,7 +1127,8 @@ class MyFlashcardManager {
 			public void valueChanged(ListSelectionEvent e) {
 				int index = complete_cards_list.getSelectedIndex();
 				if( index >= 0 ) {
-					displayCard( complete_cards.get( index ) );
+					setIsCurrentCardInTheCompletedList( true );
+					displayCard( complete_cards.get( index ), false );
 				}
 			}
 		});
@@ -795,7 +1146,8 @@ class MyFlashcardManager {
 			public void mouseReleased(MouseEvent e) {
 				int index = incomplete_cards_list.getSelectedIndex();
 				if( index >= 0 ) {
-					displayCard( incomplete_cards.get( index ) );
+					setIsCurrentCardInTheCompletedList( false );
+					displayCard( incomplete_cards.get( index ), false );
 				}
 			}
 
@@ -817,7 +1169,8 @@ class MyFlashcardManager {
 			public void mouseReleased(MouseEvent e) {
 				int index = complete_cards_list.getSelectedIndex();
 				if( index >= 0 ) {
-					displayCard( complete_cards.get( index ) );
+					setIsCurrentCardInTheCompletedList( true );
+					displayCard( complete_cards.get( index ), false );
 				}
 			}
 
@@ -843,9 +1196,9 @@ class MyFlashcardManager {
 		// select the first card and load it.
 		if( incomplete_cards.size() > 0 ) {
 			incomplete_cards_list.setSelectedIndex( 0 );
-			displayCard( incomplete_cards.get(0) );
+			setIsCurrentCardInTheCompletedList( false );
+			displayCard( incomplete_cards.get(0), true );
 		}
-
 
 
 		// Add drag and drop for adding media to a card.
@@ -903,9 +1256,12 @@ class MyFlashcardManager {
 		frame.setExtendedState( JFrame.MAXIMIZED_BOTH );
 	}
 
+	public static boolean doesFileExist( String filename ) {
+		return IncompleteReadingCard.doesFileExist( filename );
+	}
 	/**
-	 * Check if the files dropped are valid media types and
-	 * add them to our card.
+	 * Check if the files dropped are valid media
+	 * types and add them to our card.
 	 * @param file_list
 	 */
 	public void updateCardWithMediaFiles( List<File> file_list ) {
@@ -915,17 +1271,8 @@ class MyFlashcardManager {
 		}
 
 		for( File file : file_list ) {
-			//String file_name = file.getName();
-			
-			
-			//
-			//
-			//
-			//
 			// Used full path just for testing purposes.
 			String file_name = file.getAbsolutePath();
-			
-			
 			
 			Matcher match_image             = pattern_image_file_extension            .matcher( file_name );
 			Matcher match_audio             = pattern_audio_file_extension            .matcher( file_name );
@@ -933,41 +1280,261 @@ class MyFlashcardManager {
 
 			// If it's an audio file, add an audio tag.
 			if( match_audio.find() ) {
-				String str = current_card.card.getContent( ReadingLessonDeck.INDEX_AUDIO );
-				str += "<audio:\"" + file_name + "\">";
-				current_card.card.setContent( ReadingLessonDeck.INDEX_AUDIO, str );
+				
+				// Save the new audio
+				if( (current_card.audio_list.size() == 1)
+				 && (current_card.updated_audio_list.get(0) == null) ) {
+					// Save the new audio as the one to replace the original.
+					// Test if the audio file is not found.
+					String audio_filename = current_card.audio_list.get( 0 );
+					File audio_file = new File( audio_filename );
+
+					if( audio_file.exists() ) {
+						// Append the new audio to the end of the list
+						current_card.addAudio( file_name );
+					}
+					else {
+						// If it's not, then add it to the updated list.
+						// Replacing the pre generated audio.
+						current_card.setAudio( 0, file_name );
+					}
+				} else {
+					//Just add the new audio.
+					current_card.addAudio( file_name );
+				}
 			}
 
 			// If it's an image, add an image tag.
 			if( match_image.find() ) {
-				String str = current_card.card.getContent( ReadingLessonDeck.INDEX_IMAGE );
-				str += "<image:\"" + file_name + "\">";
-				current_card.card.setContent( ReadingLessonDeck.INDEX_IMAGE, str );
+				// Save the new image
+				if( (current_card.image_list.size() == 1)
+				 && (current_card.updated_image_list.get(0) == null) ) {
+					// Save the new image as the one to replace the original.
+					// Test if the image file is not found.
+					String image_filename = current_card.image_list.get( 0 );
+					File image_file = new File( image_filename );
+
+					if( image_file.exists() ) {
+						// Append the new image to the end of the list
+						current_card.addImage( file_name );
+					}
+					else {
+						// If it's not, then add it to the updated list.
+						// Replacing the pre generated image.
+						current_card.setImage( 0, file_name );
+					}
+				} else {
+					//Just add the new image.
+					current_card.addImage( file_name );
+				}
 			}
 			
-			// If it's a sentence && it's a read-along-timing, add the read-along-timing tag
-			//if ( ReadingLessonDeck.isCardSentenceMode( current_card.card ) ) {
+			// If it's a it's a read-along-timing and the card is a sentence, add the read-along-timing tag
+			if ( ReadingLessonDeck.isCardSentenceMode( current_card.card ) ) {
 				if( match_read_along_timing.find() ) {
-					String str = current_card.card.getContent( ReadingLessonDeck.INDEX_READ_ALONG_TIMINGS );
-					str += "<read-along-timing:\"" + file_name + "\">";
-					current_card.card.setContent( ReadingLessonDeck.INDEX_READ_ALONG_TIMINGS, str );
+					current_card.updated_read_along_timings_list.add( file_name );
 				}
-			//}
+			}
 			
-			// Check if updating the card also updates the one in the list.
-				// not sure if that's how java stores it's variables, as pointers behind the scene.
-			
-			
-			// TODO:
-			// Make sure to copy the file into the correct media folder.
-			
-			// call the displayCard( the_updated_card )to display the new additions.
-			// change current_card to null so displayCard's check thinks it's not the same card.
-			IncompleteReadingCard updated_card = current_card;
-			current_card = null;
-			displayCard( updated_card );
+			// call the displayCard()to display the new additions.
+			displayCard( current_card, true );
 		}
 	}
+	
+	
+	public static void copyFile( String source, String destination ) {
+		// Copy the file over
+		Path source_path      = Paths.get( source );
+		Path destination_path = Paths.get( destination );
+
+		File make_directory = new File( destination );
+		make_directory = new File( make_directory.getParent() );
+		make_directory.mkdirs();
+
+		try {
+			Files.copy( source_path, destination_path, StandardCopyOption.REPLACE_EXISTING );
+
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * Copy or delete media by comparing 2 different lists.
+	 * The updated list must be the same size or bigger than the original list. 
+	 * Will return the result of merging the two lists together.
+	 * @param original_list
+	 * @param updated_list
+	 * @return
+	 */
+	public ArrayList<String> moveFilesAndGetUpdatedList( ArrayList<String> original_list, ArrayList<String> updated_list ) {
+		
+		ArrayList<String> newest_list = new ArrayList<String>();
+		
+		// Loop through the cards contents and
+		// update all the items that are to be changed.
+		for( int i = 0; i < original_list.size(); i++ ) {
+			if( updated_list.get(i) == null ) {
+				// Add the original data.
+				newest_list.add( original_list.get( i ) );
+				
+			} else if( updated_list.get(i) == "" ) {
+				// Delete files, because the user removed it from the card.
+				// An empty string "" means we want to delete it from the card.
+
+				// Working code below
+				// Commented out for safety. test the variable values before just passing a delete instruction haha.
+				
+				//File file_to_delete = new File( original_list.get(i) );
+				//System.out.println("delete file: " + file_to_delete.getPath() );
+				//if ( file_to_delete.delete() ) {
+				//	System.out.println("Deleted the file: " + file_to_delete.getName() );
+				//} else {
+				//	System.out.println("Not deleted: " + file_to_delete.getName() );
+				//}
+				
+			} else {
+				// Copy the file over
+				String str_destination_path = original_list.get( i );
+				String str_source_path      = updated_list.get ( i );
+
+				copyFile( str_source_path, str_destination_path );
+
+				newest_list.add( str_destination_path );
+			}
+		}
+
+		if( original_list.size() > 0 ) {
+			// Loop through the rest of the updated list which
+			// will be new data to add to the card.
+			for( int i = original_list.size(); i < updated_list.size(); i++ ) {
+				if( updated_list.get(i) != null ) {
+					String final_path = getMediaUpdatedFilePath(original_list, updated_list, i);
+
+					copyFile(updated_list.get(i), final_path);
+					newest_list.add( final_path );
+				}
+			}
+		}
+		
+		return newest_list;
+	}
+	
+	/**
+	 * Get the updated file path for newly added media.
+	 * The file will be renamed to match the card.
+	 * E.g. audio.wav will become cat.wav
+	 * audio.mp3 will become Reading Lesson Sentence 0002.mp3
+	 * 
+	 * Pass 2 lists and the index of the path we want to change.
+	 * 
+	 * The new file name will be the same as the one in the original_list, if there's one at the same indes.
+	 * If there is no file in the original list, it'll keep the filename the same.
+	 * If not, it will use the filename at original_list[0].
+	 * If those fail, it'll just return the filename at the updated_list[ index ]
+	 * If all fails, it'll return a null string. Null, so we get errors, because this path is used to write files, so I prefer null string to an empty one.
+	 * @param original_list
+	 * @param updated_list
+	 * @param index
+	 * @return
+	 */
+	public static String getMediaUpdatedFilePath( ArrayList<String> original_list, ArrayList<String> updated_list, int index ) {
+		// TODO:
+		// BUGFIX:
+		// Lets say we remove a file cat_02.wav
+		// cat_03.wav exists
+		// we go to add new audio later on.
+		// the audio will overwrite cat_03.wav
+		// because this only does a basic check.
+		// Fix this in the future.
+		
+		// Loop through the cards contents and
+		// update all the items that are to be changed.
+		if( index < original_list.size() ) {
+			if( updated_list.get( index ) == null ) {
+				// Add the original data.
+				return original_list.get( index );
+			} else if( updated_list.get( index ) == "" ) {
+				// This file is planned for deletion, so pass null, so the program crashes if
+				// we try to use this in a string.
+				return null;
+			} else {
+				// Copy the file over
+				return original_list.get( index );
+			}
+		}
+
+		if( original_list.size() > 0 ) {
+			// All data in the updated list after the last index in the original list will be new media added.
+			if( index < updated_list.size() ) {
+				if( updated_list.get( index ) != null ) {
+					// Create a new name for the file, based on the filename in the original list.
+
+					File original_filename = new File( original_list.get(0) );
+
+					// Get file extension.
+					String filename_without_extension = "";
+					String file_extension = "";
+
+					// Get the filename without it's extension.
+					String name = original_filename.getName();
+					int index_of_extension = name.lastIndexOf('.');
+					if ( index_of_extension > 0) {
+						filename_without_extension = name.substring( 0, index_of_extension );
+					} else {
+						filename_without_extension = name;
+					}
+
+					// Get the file extension of the file we wish to move.
+					name = updated_list.get( index );
+					index_of_extension = name.lastIndexOf('.');
+					if ( index_of_extension > 0) {
+						file_extension = name.substring( index_of_extension, name.length() );
+					}
+
+					// Make the new filepath.
+					// Add 1 to index, because index should be at least 1 when in this loop,
+					// and we want the file counter to start on 2.
+					// For example, we want th.wav th_2.wav th_3.wav
+					int file_counter = (index + 1);
+					String final_path = original_filename.getParent() + File.separator + filename_without_extension + "_" + file_counter + file_extension;
+
+					return final_path;
+				}
+			}
+		}
+		
+		return null;
+	}
+
+	/**
+	 * Will copy the files and update the card and then save it to the datebase.
+	 */
+	public void saveCard() {
+		// Update the lists with new data
+		current_card.audio_list = moveFilesAndGetUpdatedList( current_card.audio_list, current_card.updated_audio_list );
+		current_card.image_list = moveFilesAndGetUpdatedList( current_card.image_list, current_card.updated_image_list );
+		current_card.read_along_timings_list = moveFilesAndGetUpdatedList( current_card.read_along_timings_list, current_card.updated_read_along_timings_list );
+		
+		// Saves the card and updates it.
+		current_card.saveToDatabase();
+		
+		// Move the card to the completed list if it's not already in there
+		if( ! is_current_card_in_the_completed_list ) {
+			int index = incomplete_cards_list.getSelectedIndex();
+			complete_cards.add( incomplete_cards.get( index ) );
+			incomplete_cards.remove( index );
+			setIsCurrentCardInTheCompletedList( true );
+		}
+		
+		// Update the incomplete and completed lists.
+		complete_cards_list  .setListData( makeStringArrayFromCards( complete_cards   ) );
+		incomplete_cards_list.setListData( makeStringArrayFromCards( incomplete_cards ) );
+
+		// Draw it on screen.
+		displayCard(current_card, true);
+	}
+
 
 	/**
 	 * Scans through all reading lesson files and populates
@@ -1007,12 +1574,10 @@ class MyFlashcardManager {
 						IncompleteReadingCard card = new IncompleteReadingCard(line, line_number, current_card_group, file);
 						
 						// It's a valid flashcard line, so now check if there's any media missing from it.
-						if( card.isCardIncomplete() ) {
-							incomplete_cards.add( card );
-						}
-						else
-						{
+						if( card.isCardComplete() ) {
 							complete_cards.add( card );
+						} else {
+							incomplete_cards.add( card );
 						}
 					}
 				}
@@ -1055,28 +1620,34 @@ class MyFlashcardManager {
 	public IncompleteReadingCard getCurrentCard() {
 		return this.current_card;
 	}
+	public void setCurrentCard( IncompleteReadingCard card) {
+		this.current_card = card;
+	}
+	public void setIsCurrentCardInTheCompletedList( boolean b ) {
+		this.is_current_card_in_the_completed_list = b;
+	}
 
 	/**
 	 * Draw the card on the screen.
 	 * @param card
 	 */
-	public void displayCard( IncompleteReadingCard card ) {
-		// Stop this method from being ran when we are already displaying the card.
-		if( card == this.current_card ) {
-			return;
-		} else {
-			this.current_card = card;
+	public void displayCard( IncompleteReadingCard card, boolean is_force_refresh ) {
+		if( ! is_force_refresh ) {
+			// Stop this method from being ran when we are already displaying the card.
+			if( card == getCurrentCard() ) {
+				return;
+			} else {
+				setCurrentCard( card );
+			}
 		}
+		
+		
+		ArrayList<String> text_list = card.getText();
+		ArrayList<String> image_list = card.getImageFilePaths();
+		ArrayList<String> audio_list = card.getAudioFilePaths();
+		ArrayList<String> read_along_timings_list = card.getReadAlongTimingsFilePaths();
 
 		// Used later to check if we should display the "Completed" or "Incomplete" heading at the top of the card display.
-		boolean is_completed = true;
-
-		// Initial setup for displaying the card on the screen.
-		ArrayList<String> text_list  = ReadingLessonDeck.getCardText ( getCurrentCard().card );
-		ArrayList<String> image_list = ReadingLessonDeck.getCardImage( getCurrentCard().card );
-		ArrayList<String> audio_list = ReadingLessonDeck.getCardAudio( getCurrentCard().card );
-		ArrayList<String> read_along_timings_list = ReadingLessonDeck.getCardReadAlongTimings( getCurrentCard().card );
-
 		MyScrollableJPanel panel = new MyScrollableJPanel();
 		panel.setLayout( new BoxLayout(panel, BoxLayout.Y_AXIS) );
 
@@ -1111,6 +1682,17 @@ class MyFlashcardManager {
 		// Add card to the screen and show missing audio, images, and read along timings.
 		panel.add( card_completion_title );
 
+		
+		JButton button_save_card = new JButton( "Save Card" );
+		
+		button_save_card.addActionListener(new ActionListener() {
+			public void actionPerformed( ActionEvent event ) {
+				saveCard();
+			}
+		});
+
+		panel.add( button_save_card );
+	
 		// Display Card's text.
 		panel.add( card_text_title );
 		for(int i = 0; i < text_list.size(); i++ ) {
@@ -1152,46 +1734,44 @@ class MyFlashcardManager {
 
 		// Display Card's images.
 		panel.add( card_image_title );
-		if( image_list.size() == 0 ) {
-			// Display "media missing" label.
-			JLabel label_missing = new JLabel( "Missing image - drag and drop image files here to add them.");
-			label_missing.setFont( medium_font );
-			label_missing.setForeground( DARK_RED );
-			label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
-			panel.add( label_missing );
 
-			is_completed = false;
-		}
-		else {
-			// Add the images to the panel.
-			for( int i = 0; i < image_list.size(); i++ ) {
-				String image_filename = CardDBTagManager.getImageFilepath( image_list.get(i) );
-				
-				// Check if the image file exists.
-				File image_file = new File( image_filename );
-				if( ! image_file.exists() ) {
-					// Display "file missing" label.
-					JLabel label_missing = new JLabel( "Error: file is missing - " + image_filename );
-					label_missing.setFont( medium_font );
-					label_missing.setForeground( DARK_RED );
-					label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
-					panel.add( label_missing );
+		if( ReadingLessonDeck.isCardASentence( getCurrentCard().card ) || ReadingLessonDeck.isCardAWord( getCurrentCard().card ) ) {
+			if( image_list.size() == 0 ) {
+				// Display "media missing" label.
+				JLabel label_missing = new JLabel( "Missing image - drag and drop image files here to add them.");
+				label_missing.setFont( medium_font );
+				label_missing.setForeground( DARK_RED );
+				label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+				panel.add( label_missing );
+			}
+			else {
+				// Add the images to the panel.
+				for( int i = 0; i < image_list.size(); i++ ) {
+					String image_filename = image_list.get(i);
 
-					is_completed = false;
-				}
-				else {
-					// Display the image.
-					JLabel label_image = new JLabel();
-					ImageIcon icon = new ImageIcon( image_filename );
-					label_image.setIcon( icon );
-					label_image.setAlignmentX( Component.CENTER_ALIGNMENT );
-					panel.add( label_image );
-				
-					if( i < image_list.size() -1 ) {
-						// Add a blank spacer.
-						JLabel pad = new JLabel("  ");
-						pad.setFont(small_font);
-						panel.add( pad );
+					// Check if the image file exists.
+					if( doesFileExist( image_filename ) ) {
+						// Display the image
+						JLabel label_image = new JLabel();
+						ImageIcon icon = new ImageIcon( image_filename );
+						label_image.setIcon( icon );
+						label_image.setAlignmentX( Component.CENTER_ALIGNMENT );
+						panel.add( label_image );
+
+						if( i < image_list.size() -1 ) {
+							// Add a blank spacer.
+							JLabel pad = new JLabel("  ");
+							pad.setFont(small_font);
+							panel.add( pad );
+						}
+					}
+					else {
+						// Display "file missing" label.
+						JLabel label_missing = new JLabel( "<html>File is missing:<br>" + image_filename + "</html>" );
+						label_missing.setFont( small_font );
+						label_missing.setForeground( DARK_RED );
+						label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+						panel.add( label_missing );
 					}
 				}
 			}
@@ -1203,6 +1783,7 @@ class MyFlashcardManager {
 
 		// Display Card's audio.
 		panel.add( card_audio_title );
+
 		if( audio_list.size() == 0 ) {
 			// Display "media missing" label.
 			JLabel label_missing = new JLabel( "Missing audio - drag and drop audio files here to add them.");
@@ -1210,37 +1791,48 @@ class MyFlashcardManager {
 			label_missing.setForeground( DARK_RED );
 			label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
 			panel.add( label_missing );
-
-			is_completed = false;
 		}
 		else {
 			// Add the audio to the panel.
 			for( int i = 0; i < audio_list.size(); i++ ) {
-				String audio_filename = CardDBTagManager.getAudioFilepath(audio_list.get( i ) );
 				// Check if the image file exists.
-				File audio_file = new File( audio_filename );
-				if( ! audio_file.exists() ) {
-					// Display "file missing" label.
-					JLabel label_missing = new JLabel( "Error: file is missing - " + audio_filename );
-					label_missing.setFont( medium_font );
-					label_missing.setForeground( DARK_RED );
-					label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
-					panel.add( label_missing );
-
-					is_completed = false;
-				}
-				else {
-					// Add the audio player button.
-					JButton audio_button = new JButton( audio_filename );
-					audio_button.setAlignmentX( Component.CENTER_ALIGNMENT );
-					panel.add( audio_button );
+				String filepath = audio_list.get( i );
 				
+				if( doesFileExist( filepath ) ) {
+					// Add the audio player button.
+					JButton audio_button = new JButton( filepath );
+					audio_button.setAlignmentX( Component.CENTER_ALIGNMENT );
+					audio_button.addActionListener( new ActionListener() {
+						public void actionPerformed( ActionEvent event ) {
+							try {
+								MyAudioPlayer audio_player = new MyAudioPlayer( new File("/home/simon/MyStuff/Programming/eclipse-workspace/TeachingTinaReadingLessonCreator/Tinas Reading Lessons/sentences/Reading Lesson 0001 - Sentence.wav"));
+								audio_player.play();
+								
+							} catch (UnsupportedAudioFileException e) {
+								e.printStackTrace();
+							} catch (IOException e) {
+								e.printStackTrace();
+							} catch (LineUnavailableException e) {
+								e.printStackTrace();
+							}
+						}
+					});
+					panel.add( audio_button );
+
 					if( i < audio_list.size() -1 ) {
 						// Add a blank spacer.
 						JLabel pad = new JLabel("  ");
 						pad.setFont(small_font);
 						panel.add( pad );
 					}
+				}
+				else {
+					// Display "file missing" label.
+					JLabel label_missing = new JLabel( "<html>File is missing:<br>" + filepath + "</html>" );
+					label_missing.setFont( small_font );
+					label_missing.setForeground( DARK_RED );
+					label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+					panel.add( label_missing );
 				}
 			}
 		}
@@ -1250,55 +1842,103 @@ class MyFlashcardManager {
 
 
 		// Display Card's read along timings.
-		//if( ReadingLessonDeck.isCardSentenceMode( current_card ) ) {
+		if( (audio_list.size() > 0) && ReadingLessonDeck.isCardASentence( getCurrentCard().card ) ) {
 			panel.add( card_read_along_timings_title );
-			if( read_along_timings_list.size() == 0 ) {
+
+			if( read_along_timings_list.isEmpty() ) {
 				// Display "media missing" label.
-				JLabel label_missing = new JLabel( "Missing read along timings - drag and drop timings files here to add them.");
+				JLabel label_missing = new JLabel( "Missing read along timings.");
 				label_missing.setFont( medium_font );
 				label_missing.setForeground( DARK_RED );
 				label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
-				
-				JButton button_rat_creator = new JButton( "Create read along timing" );
-				button_rat_creator.addActionListener( new ActionListener() {
-					public void actionPerformed( ActionEvent event ) {
-						// Get the sentence from the card and turn it into a list of words that we can pass.
-						ArrayList<String> words = TeachingTinaReadingLessonCreator.getWordsListFromText( ReadingLessonDeck.getCardText( getCurrentCard().card ).get(0) );
-
-						ArrayList<String> audio_list = ReadingLessonDeck.getCardAudio( getCurrentCard().card );
-						String audio_filename = CardDBTagManager.getAudioFilepath(audio_list.get( 0 ) );
-						// Remove the file extension from the audio file
-						// and put the timings file extension on the end.
-						Matcher match_audio = pattern_audio_file_extension.matcher( audio_filename );
-						match_audio.find();
-						String read_along_timings_filename = audio_filename.substring( 0, match_audio.start() );
-						read_along_timings_filename += ".timing";
-
-						File timings_file = new File( read_along_timings_filename );
-						File audio_file   = new File( audio_filename );
-
-						TeachingTinaReadAlongTimingCreator timing_creator = new TeachingTinaReadAlongTimingCreator( words, audio_file, timings_file );
-					}
-				});
-
-				button_rat_creator.setAlignmentX( Component.CENTER_ALIGNMENT );
 				panel.add( label_missing );
-				panel.add( button_rat_creator );
+			}
+			else {
+				// loop through the list and add a button or a missing error for each file.
+				JLabel lbl_rat_found = new JLabel("Read Along Timing Found.");
+				lbl_rat_found.setFont( large_font );
+				lbl_rat_found.setForeground( DARK_GREEN );
+				lbl_rat_found.setAlignmentX( Component.CENTER_ALIGNMENT );
+				panel.add( lbl_rat_found );
 
-				is_completed = false;
+
+				for( int i = 0; i < read_along_timings_list.size(); i++ ) {
+					// Check if the timings file exists.
+					String timings_filepath = read_along_timings_list.get( i );
+
+					if( (audio_list.size() > i) && doesFileExist( audio_list.get(i) ) ) {
+
+						JButton rat_button = new JButton();
+						rat_button.setFont( medium_font );
+						rat_button.setAlignmentX( Component.CENTER_ALIGNMENT );
+						ReadAlongTimingsActionListener rat_listener = new ReadAlongTimingsActionListener( this, audio_list.get(i), timings_filepath );
+
+						if( doesFileExist( timings_filepath) ) {
+							rat_button.setText ( "<html><b>Edit Read Along Timing</b><br>" + timings_filepath + "</html>" );
+						} else {
+							rat_button.setText ( "<html><b>Create Read Along Timing</b><br>" + timings_filepath + "</html>" );
+						}
+
+						rat_button.addActionListener( rat_listener );
+						panel.add( rat_button );
+
+						if( i < read_along_timings_list.size() -1 ) {
+							// Add a blank spacer.
+							JLabel pad = new JLabel("  ");
+							pad.setFont(small_font);
+							panel.add( pad );
+						}
+					}
+					else {
+						// Display "file missing" label.
+						JButton rat_button = new JButton( "<html><b>Add audio to create/edit Read Along Timings.</b><br><br>" + timings_filepath + "</html>" );
+						rat_button.setFont( medium_font );
+						rat_button.setAlignmentX( Component.CENTER_ALIGNMENT );
+						rat_button.setEnabled( false );
+						panel.add( rat_button );
+
+						if( i < read_along_timings_list.size() -1 ) {
+							// Add a blank spacer.
+							JLabel pad = new JLabel("  ");
+							pad.setFont(small_font);
+							panel.add( pad );
+						}
+					}
+				}
 			}
-		//}
-		//else {
+		}
+		else if( audio_list.size() == 0 && ReadingLessonDeck.isCardSentenceMode( getCurrentCard().card ) ) {
 			for( int i = 0; i < read_along_timings_list.size(); i++ ) {
-				String filename = CardDBTagManager.getAudioFilepath( read_along_timings_list.get( i ) );
-				JButton button_rat_creator = new JButton( "Preview read-along-timing: " + filename );
+				String filename = read_along_timings_list.get( i );
+				JButton button_rat_creator = new JButton( "Edit read along timings.");
+				JLabel lbl_rat_found = new JLabel("Read Along Timing Found.");
+				JLabel lbl_hint = new JLabel("Add audio to enable the button.");
+				JLabel lbl_rat_file_path = new JLabel( filename );
+			
+				lbl_hint.setFont( large_font );
+				lbl_hint.setForeground( DARK_RED );
+				lbl_hint.setAlignmentX( Component.CENTER_ALIGNMENT );
+
+				lbl_rat_found.setFont( large_font );
+				lbl_rat_found.setForeground( DARK_GREEN );
+				lbl_rat_found.setAlignmentX( Component.CENTER_ALIGNMENT );
+
+				lbl_rat_file_path.setFont( small_font );
+				lbl_rat_file_path.setForeground( DARK_RED );
+				lbl_rat_file_path.setAlignmentX( Component.CENTER_ALIGNMENT );
+			
+				button_rat_creator.setFont( medium_font );
 				button_rat_creator.setAlignmentX( Component.CENTER_ALIGNMENT );
+				button_rat_creator.setEnabled( false );
+			
+				panel.add( lbl_rat_found );
+				panel.add( button_rat_creator );
 			}
-		//}
+		}
 
 
 		// Update the heading to show if the card is completed or not.
-		if( is_completed ) {
+		if( getCurrentCard().isCardComplete() ) {
 			Border border = BorderFactory.createLineBorder( DARK_GREEN, BORDER_THICKNESS );
 			card_completion_title.setBorder( border );
 
@@ -1332,7 +1972,6 @@ class MyFlashcardManager {
 /**
  * Manage lists of words for the two lists at each side of the JFrame.
  * Most common words list and the previous lessons words list.
- * @author simon
  *
  */
 class WordList {
@@ -1347,7 +1986,7 @@ class WordList {
 		this.word_index = new ArrayList<Integer>();
 		for( int i = 0; i < this.word_list.size(); i++ ) {
 			// Add one so the index isn't zero based.
-			this.word_index.add( new Integer(i+1) );
+			this.word_index.add( i+1 );
 		}
 
 	}
@@ -1870,5 +2509,3 @@ class MyScrollableJPanel extends JPanel implements Scrollable {
         return false;
     }
 }
-
-
