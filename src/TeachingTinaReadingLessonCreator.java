@@ -21,6 +21,7 @@ import javax.swing.border.Border;
 import javax.swing.text.*;
 
 import libteachingtinadbmanager.*;
+import libteachingtinadbmanager.sqlite_db.SQLiteReadingLessonHandler;
 
 import javax.swing.event.*;
 import javax.swing.text.DefaultEditorKit.*;
@@ -35,6 +36,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -64,8 +71,63 @@ public class TeachingTinaReadingLessonCreator {
 	JList most_common_words_list;
 	JScrollPane common_words_scroll;
 	
+	static Connection db_connection;
+	static String sqlite_table_name = "reading_lessons";
+
 	public static void main(String[] args) {
-		TeachingTinaReadingLessonCreator app = new TeachingTinaReadingLessonCreator();
+		// Load the database
+		db_connection = null;
+		try {
+			db_connection = DriverManager.getConnection("jdbc:sqlite:ReadingLessons.db");
+			// Create table
+			String create_table = 
+				"CREATE TABLE IF NOT EXISTS " + sqlite_table_name + "( " +
+				"card_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+				"date_in_millis integer, " +
+				"box_num integer, " +
+				"reading_lesson_level integer, " +
+				"sound_type text, " +
+				"sound_word_or_sentence text, " +
+				"id_of_linked_card integer, " +
+				"is_spelling_mode integer, " +
+
+				"card_text text, " +
+				"card_images text, " +
+				"card_audio text, " +
+				"card_read_along_timings text );";
+
+			Statement stat = db_connection.createStatement();
+			stat.execute( create_table );
+
+			// Load the main window and get into our app.
+			TeachingTinaReadingLessonCreator app = new TeachingTinaReadingLessonCreator();
+			
+			// Loop until we close the main jframe on my app.
+			// Without this, the SQLite database connection is closed,
+			// so stick to a loop to make sure that it all exit properly.
+			while( app.frame.isShowing() ) {
+				try {
+					Thread.sleep( 1000 );	
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			}
+			System.out.println("after app loop");
+
+		} catch( SQLException e ) {
+			e.printStackTrace();
+		}
+		finally {
+			if( db_connection != null ) {
+				try {
+					db_connection.close();
+					System.out.println("Closed database connection.");
+
+				} catch ( SQLException e ) {
+					e.printStackTrace();
+				}
+			}
+		}
 	}
 	
 	TeachingTinaReadingLessonCreator() {
@@ -118,7 +180,7 @@ public class TeachingTinaReadingLessonCreator {
 		FocusOnTextActionListener focus_on_text_action_listener          = new FocusOnTextActionListener();
 		CreateLessonActionListener create_lesson_action_listener         = new CreateLessonActionListener();
 		PreviewLessonActionListener preview_lesson_action_listener       = new PreviewLessonActionListener();
-		FlashcardManagerActionListener flashcard_manager_action_listener = new FlashcardManagerActionListener();
+		FlashcardManagerActionListener flashcard_manager_action_listener = new FlashcardManagerActionListener( db_connection );
 
 		JButton copyButton = new JButton( new CopyAction() );
 		copyButton.setText( "Copy" );
@@ -218,7 +280,7 @@ public class TeachingTinaReadingLessonCreator {
 		// Display the frame and update it.
 		frame.setSize(600, 500);
 		frame.setLocationRelativeTo( null );
-		frame.setDefaultCloseOperation( JFrame.EXIT_ON_CLOSE );
+		frame.setDefaultCloseOperation( JFrame.DISPOSE_ON_CLOSE );
 		frame.setVisible( true );
 		frame.setExtendedState( JFrame.MAXIMIZED_BOTH );
 		
@@ -228,20 +290,6 @@ public class TeachingTinaReadingLessonCreator {
 		
 	}
 	
-	public void addNewLesson( ReadingLessonCreator lesson ) {
-		if( this.previous_lesson == null ) {
-			this.previous_lesson = lesson;
-		}
-		else {
-			// Link the 2 new lessons together.
-			this.previous_lesson.setNextLesson( lesson );
-			lesson.setPreviousLesson( this.previous_lesson );
-			
-			lesson.setLevel( this.previous_lesson.getLevel() + 1 );
-			// set this as the most recent lesson.
-			this.previous_lesson = lesson;
-		}
-	}
 	public static boolean isWordInList(String str, DefaultListModel<String> word_list ) {
 		// For some reason their code keeps a character at the start of the word.
 		// However, it does NOT keep a character at the start when it is the first word written in the document.
@@ -277,7 +325,7 @@ public class TeachingTinaReadingLessonCreator {
 
 		return false;
 	}
-	private void setCurrentReadingLevel( int reading_level ) {
+	private void updateCurrentReadingLevel() {
 		this.lbl_reading_level.setText(("<html><b>Current reading level of known words is: " + getCurrentReadingLevel() + "&nbsp;&nbsp;&nbsp;&nbsp;Max reading level is: " + getMaxReadingLevel() + "</b></html>") );
 	}
 	
@@ -402,13 +450,37 @@ public class TeachingTinaReadingLessonCreator {
 	}
 
 	/**
-	 * Will return the reading level that the current text is at
+	 * Will return the reading level that the current text is at, ignoring new words.
 	 */
 	private int getCurrentReadingLevel() {
+		int max_level = getMaxReadingLevel();
 		if( this.previous_lesson == null ) {
 			return 0;
 		} else {
-			return this.previous_lesson.getCurrentReadingLevel( getWordsListFromEditor() );
+			// Scan through all the words and their reading levels and see if we have any matches.
+			List<String>  all_words  = previous_lesson.getAllLessonsWords();
+			List<Integer> all_levels = previous_lesson.getAllLessonsWordsReadingLevels();
+			int current_level = 0;
+
+			List<String> list = getWordsListFromEditor();
+			for( String word : list ) {
+				for( int k = 0; k < all_words.size(); k++ ) {
+					if( word.compareToIgnoreCase( all_words.get( k ) ) == 0 ) {
+						if( all_levels.get( k ) > current_level ) {
+							current_level = all_levels.get( k );
+							
+							// No point in looping anymore as this is the maximum value we can reach,
+							// so saves a bit of cpu power.
+							if( current_level == max_level ) {
+								return current_level;
+							}
+						}
+					}
+				}
+			}
+			
+			return current_level;
+			//return this.previous_lesson.getCurrentReadingLevel( getWordsListFromEditor() );
 		}
 	}
 	private int getMaxReadingLevel() {
@@ -421,18 +493,11 @@ public class TeachingTinaReadingLessonCreator {
 
 	private void loadLessons() {
 		DeckSettings deck_settings = null;
-		
-		// Get a list of all lesson files
-		ArrayList<String> all_lessons = TextEditorDBManager.getAllLessonFiles();
-		/**
-		 * Scan through these and setup our array of lessons.
-		 **/
-		for(int i = 0; i < all_lessons.size(); i++ ) {
-			// Load the database file into memory.
-			File file = new File( all_lessons.get(i) );
-			ReadingLessonCreator lesson = TextEditorDBManager.readDBFile( file, deck_settings );
-
-			addNewLesson( lesson );
+		try {
+			ReadingLessonCreator lesson = TextEditorDBManager.readSQLiteDB( db_connection, sqlite_table_name, deck_settings );
+			previous_lesson = lesson;
+		} catch ( SQLException e ) {
+			e.printStackTrace();
 		}
 	}
 	
@@ -444,7 +509,7 @@ public class TeachingTinaReadingLessonCreator {
 
 	private void updateComponents() {
 		// Update the reading level dispayed.
-		setCurrentReadingLevel( getCurrentReadingLevel() );
+		updateCurrentReadingLevel();
 
 		// Update the list of previous lessons words
 		WordList prev_lesson_words = new WordList( getAllPreviousLessonWords() );
@@ -513,18 +578,11 @@ public class TeachingTinaReadingLessonCreator {
 		public void actionPerformed(ActionEvent e) {
 			ReadingLessonCreator deck = new ReadingLessonCreator( getPreviousLesson(), getTextFromEditor() );
 			
-			
-			deck.printAllLessonContentsAsLessonFile();
-			
 			if( deck.hasNewWords() ) {
-				// Write the new lesson to a file.
-				String filepath = TextEditorDBManager.getDirectory() + TextEditorDBManager.getFileName( deck.getLevel() );
-				File filename = new File( filepath );
-				System.out.println( "writing to: " + filepath );
-				TextEditorDBManager.writeDB( filename, deck );
-				
-				// Now add the lesson to the previous lessons
-				addNewLesson( deck );
+				// Write the SQLite database.
+				SQLiteReadingLessonHandler.writeToSQLiteDB(db_connection, sqlite_table_name, deck);
+
+				loadLessons();
 				
 				updateComponents();
 			}
@@ -547,9 +605,14 @@ public class TeachingTinaReadingLessonCreator {
 	}
 
 	private class FlashcardManagerActionListener implements ActionListener {
+		Connection db_connection;
+		
+		FlashcardManagerActionListener( Connection db_connection ) {
+			this.db_connection = db_connection;
+		}
 
 		public void actionPerformed(ActionEvent e) {
-			new MyFlashcardManager();
+			new MyFlashcardManager( this.db_connection );
 		}
 	}
 }
@@ -558,19 +621,31 @@ public class TeachingTinaReadingLessonCreator {
  * Stores a Card object along with it's database file and line number.
  * It allows us to check if the card is missing any media.
  */
-class IncompleteReadingCard {
-	public Card card;
-	String db_line;
-	CardsGroup cards_group;
-	int line_number;
-	File db_file;
-	
+//class IncompleteReadingCard {
+/**
+ * Load a card into memory and allow us to add media to it and save.
+ */
+class ReadingCardEditor {
+	int card_id;
+	long date_in_millis;
+	int box_num;
+	int reading_lesson_level;
+	String sound_type;
+	String sound_word_or_sentence;
+	int id_of_linked_card;
+	boolean is_spelling_mode;
+
+	String card_text;
+	String card_images;
+	String card_audio;
+	String card_read_along_timings;
+
 	// Populate these with the cards content for easy displaying.
 	ArrayList<String> text_list;
 	ArrayList<String> image_list;
 	ArrayList<String> audio_list;
 	ArrayList<String> read_along_timings_list;
-	
+
 	/*
 	 * These lists will either be the same size as the lists stored in the card, or they'll be larger for adding new content.
 	 */
@@ -578,121 +653,161 @@ class IncompleteReadingCard {
 	public ArrayList<String> updated_read_along_timings_list;
 	public ArrayList<String> updated_audio_list;
 	public ArrayList<String> updated_image_list;
-	
-	IncompleteReadingCard( String db_line, int line_number, CardsGroup cards_group, File db_file ) {
-		initAndReset( db_line, line_number, cards_group, db_file );
+
+	ReadingCardEditor ( 
+		int card_id,
+		long date_in_millis,
+		int box_num,
+		int reading_lesson_level,
+		String sound_type,
+		String sound_word_or_sentence,
+		int id_of_linked_card,
+		boolean is_spelling_mode,
+
+		String card_text,
+		String card_images,
+		String card_audio,
+		String card_read_along_timings
+	) {
+		initAndReset(
+			card_id,
+			date_in_millis,
+			box_num,
+			reading_lesson_level,
+			sound_type,
+			sound_word_or_sentence,
+			id_of_linked_card,
+			is_spelling_mode,
+
+			card_text,
+			card_images,
+			card_audio,
+			card_read_along_timings
+		);
 	}
-	
+
 	/**
 	 * Used to initialize or reset our card whenever we update it.
-	 * @param db_line
-	 * @param line_number
-	 * @param cards_group
-	 * @param db_file
 	 */
-	public void initAndReset( String db_line, int line_number, CardsGroup cards_group, File db_file ) {
-		this.card        = new Card( db_line, null, cards_group );
-		this.db_line     = db_line;
-		this.line_number = line_number;
-		this.db_file     = db_file;
-		this.cards_group = cards_group;
-		
-		text_list  = ReadingLessonDeck.getCardText ( this.card );
-		image_list = convertImageListTagsToFilePaths( ReadingLessonDeck.getCardImage( this.card ) );
-		audio_list = convertAudioListTagsToFilePaths( ReadingLessonDeck.getCardAudio( this.card ) );
-		read_along_timings_list = convertReadAlongTimingsListTagsToFilePaths( ReadingLessonDeck.getCardReadAlongTimings( this.card ) );
-		
+	public void initAndReset (
+		int card_id,
+		long date_in_millis,
+		int box_num,
+		int reading_lesson_level,
+		String sound_type,
+		String sound_word_or_sentence,
+		int id_of_linked_card,
+		boolean is_spelling_mode,
+
+		String card_text,
+		String card_images,
+		String card_audio,
+		String card_read_along_timings
+	)
+	{
+		this.card_id                 = card_id;
+		this.date_in_millis          = date_in_millis;
+		this.box_num                 = box_num;
+		this.reading_lesson_level    = reading_lesson_level;
+		this.sound_type              = sound_type;
+		this.sound_word_or_sentence  = sound_word_or_sentence;
+		this.id_of_linked_card       = id_of_linked_card;
+		this.is_spelling_mode        = is_spelling_mode;
+		this.card_text               = card_text;
+		this.card_images             = card_images;
+		this.card_audio              = card_audio;
+		this.card_read_along_timings = card_read_along_timings;
+
+		this.text_list = CardDBTagManager.makeStringAList( card_text );
+
+		image_list = convertImageListTagsToFilePaths( CardDBTagManager.makeStringAList( card_images ) );
+		audio_list = convertAudioListTagsToFilePaths( CardDBTagManager.makeStringAList( card_audio ) );
+		read_along_timings_list = convertReadAlongTimingsListTagsToFilePaths( CardDBTagManager.makeStringAList( card_read_along_timings ) );
+
 		resetAllUpdatedLists();
 	}
 	
-	public String getUpdatedDatabaseLine() {
-		String result = "";
-		
-		String[] elements = db_line.split( "\t" );
-		
-		// Get the database line upto, and including the card's word/sound/sentence.
-		result = elements[0] + "\t" +
-		         elements[1] + "\t" +
-		         elements[2] + "\t" +
-		         elements[3] + "\t" +
-		         elements[4] + "\t" +
-		         elements[5] + "\t" +
-		         elements[6];
-		
-		// Get all the media tags
-		result += "\t";
-		for(int i = 0; i < updated_audio_list.size(); i++ ) {
-			String path = MyFlashcardManager.getMediaUpdatedFilePath( audio_list, updated_audio_list, i );
-			path = path.replaceAll( TextEditorDBManager.getDirectory(), "" );
-			result += "<audio:\"" + path + "\">";
+	public static boolean isStringAWord( String str ) {
+		if( str.compareToIgnoreCase( TextEditorDBManager.WORD ) == 0 ) {
+			return true;
+		} else {
+			return false;
 		}
-		
-		result += "\t";
-		for(int i = 0; i < updated_image_list.size(); i++ ) {
-			String path = MyFlashcardManager.getMediaUpdatedFilePath( image_list, updated_image_list, i );
-			path = path.replaceAll( TextEditorDBManager.getDirectory(), "" );
-			result += "<image:\"" + path + "\">";
+	}
+	public static boolean isStringASentence( String str ) {
+		if( str.compareToIgnoreCase( TextEditorDBManager.SENTENCE ) == 0 ) {
+			return true;
+		} else {
+			return false;
+		}
+	}
+	public static boolean isStringASound( String str ) {
+		if( str.compareToIgnoreCase( TextEditorDBManager.SOUND ) == 0 ) {
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	public boolean isCardAWord() {
+		return isStringAWord( this.sound_word_or_sentence );
+	}
+	
+	public boolean isCardASentence() {
+		return isStringASentence( this.sound_word_or_sentence );
+	}
+
+	public boolean isCardASound() {
+		return isStringASound( this.sound_word_or_sentence );
+	}
+
+	public void saveToDatabase( Connection db_connection ) {
+		// Get all the media tags
+		String card_images = "";
+		String card_audio = "";
+		String card_read_along_timings = "";
+
+		for (int i = 0; i < updated_audio_list.size(); i++) {
+			String path = MyFlashcardManager.getMediaUpdatedFilePath( audio_list, updated_audio_list, i );
+			path = path.replaceAll(TextEditorDBManager.getDirectory(), "");
+			card_audio += "<audio:\"" + path + "\">";
 		}
 
-		result += "\t";
-		for(int i = 0; i < updated_read_along_timings_list.size(); i++ ) {
-			String path = MyFlashcardManager.getMediaUpdatedFilePath( read_along_timings_list, updated_read_along_timings_list, i );
-			path = path.replaceAll( TextEditorDBManager.getDirectory(), "" );
-			result += "<read-along-timing:\"" + path + "\">";
+		for (int i = 0; i < updated_image_list.size(); i++) {
+			String path = MyFlashcardManager.getMediaUpdatedFilePath( image_list, updated_image_list, i );
+			path = path.replaceAll(TextEditorDBManager.getDirectory(), "");
+			card_images += "<image:\"" + path + "\">";
 		}
-		
-		
-		return result;
-	}
-	
-	public void saveToDatabase() {
-		
-		String updated_db_line = getUpdatedDatabaseLine();
-		
-		// Read the database file, and change the line that matches our card.
-		ArrayList<String> file_lines_list = new ArrayList<String>();
-		try( BufferedReader br = new BufferedReader( new FileReader( db_file ) ) ) {
-			String line = "";
-			int line_count = -1;
-			while( (line = br.readLine()) != null ){
-				line_count++;
-				if( line_count == line_number ) {
-					file_lines_list.add( updated_db_line );
-				} else {
-					file_lines_list.add( line );
-				}
-			}
-			
-			
-			// Write to a new database file.
-			File temp_db_file = new File( db_file.getPath() + ".temp" );
-			try {
-				FileWriter fw = new FileWriter( temp_db_file );
-				for( String output_line : file_lines_list) {
-					fw.write( output_line + "\n" );
-				}
-				fw.close();
-				
-				
-				// Move the new database file to the filename of our original database file.
-				Files.move( temp_db_file.toPath(), db_file.toPath(), StandardCopyOption.REPLACE_EXISTING );
-				
-				
-				// Update and reset our stored card, just for consistency.
-				initAndReset( updated_db_line, this.line_number, this.cards_group, this.db_file );
-				
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-			
-		} catch( IOException e ) {
-			e.printStackTrace();
+
+		for (int i = 0; i < updated_read_along_timings_list.size(); i++) {
+			String path = MyFlashcardManager.getMediaUpdatedFilePath( read_along_timings_list,
+			                                                          updated_read_along_timings_list, i );
+			path = path.replaceAll(TextEditorDBManager.getDirectory(), "");
+			card_read_along_timings += "<read-along-timing:\"" + path + "\">";
 		}
+
+		// Save the media tags to the database
+		SQLiteReadingLessonHandler.updateCardMedia( db_connection, card_id, card_images, card_audio, card_read_along_timings );
+		// Update and reset our stored card, just for consistency.
+		initAndReset(
+			this.card_id,
+			this.date_in_millis,
+			this.box_num,
+			this.reading_lesson_level,
+			this.sound_type,
+			this.sound_word_or_sentence,
+			this.id_of_linked_card,
+			this.is_spelling_mode,
+
+			this.card_text,
+			card_images,
+			card_audio,
+			card_read_along_timings
+		);
 	}
-	
-	
+
 	/**
-	 * Will make the updated lists the same length as their original list and will set their data to null.
+	 * Will make the updated lists the same length as their original list and will set their elements to null.
 		updated_text_list
 		updated_audio_list
 		updated_image_list
@@ -703,7 +818,7 @@ class IncompleteReadingCard {
 		updated_audio_list = new ArrayList<String>();
 		updated_image_list = new ArrayList<String>();
 		updated_read_along_timings_list = new ArrayList<String> ();
-		
+
 		// Populate the updated lists with null values to show that the current card has no new updated fields.
 		for( int i = 0; i < text_list.size(); i++ ) {
 			updated_text_list.add( null );
@@ -718,23 +833,23 @@ class IncompleteReadingCard {
 			updated_image_list.add( null );
 		}
 	}
-	
+
 	public boolean isCardComplete() {
-		if ( ReadingLessonDeck.isCardASentence( card ) ) {
+		if( ReadingCardEditor.isStringASentence( this.sound_word_or_sentence) ) {
 			// Check if our card has audio tags.
-			if( ! CardDBTagManager.hasAudioTag( this.db_line ) ) {
+			if( ! CardDBTagManager.hasAudioTag( this.card_audio ) ) {
 				// No Audio tags.
 				return false;
 			}
 
 			// Check if our card has images tags.
-			else if( ! CardDBTagManager.hasImageTag( this.db_line ) ) {
+			else if( ! CardDBTagManager.hasImageTag( this.card_images ) ) {
 				// No Image tags.
 				return false;
 			}
 
 			// Check if our card has read_along timings tags.
-			else if( ! CardDBTagManager.hasReadAlongTimingsTag( this.db_line ) ) {
+			else if( ! CardDBTagManager.hasReadAlongTimingsTag( this.card_read_along_timings ) ) {
 				// No Read Along Timings tags.
 				return false;
 			}
@@ -754,15 +869,15 @@ class IncompleteReadingCard {
 			}
 		}
 
-		else if ( ReadingLessonDeck.isCardAWord( card ) ) {
+		else if( ReadingCardEditor.isStringAWord( this.sound_word_or_sentence) ) {
 			// Check if our card has audio tags.
-			if( ! CardDBTagManager.hasAudioTag( this.db_line ) ) {
+			if ( ! CardDBTagManager.hasAudioTag( this.card_audio ) ) {
 				// No Audio tags.
 				return false;
 			}
 
 			// Check if our card has images tags.
-			else if( ! CardDBTagManager.hasImageTag( this.db_line ) ) {
+			else if ( ! CardDBTagManager.hasImageTag( this.card_images ) ) {
 				// No Image tags.
 				return false;
 			}
@@ -771,24 +886,24 @@ class IncompleteReadingCard {
 			ArrayList<String> image_list = getImageFilePaths();
 			ArrayList<String> audio_list = getAudioFilePaths();
 
-			if( doAllFilesExistInList( image_list ) &&
-			    doAllFilesExistInList( audio_list ) )
-			{
+			if ( doAllFilesExistInList( image_list ) &&
+			     doAllFilesExistInList( audio_list ) ) {
 				return true;
 			} else {
 				return false;
 			}
 		}
 
-		else if ( ReadingLessonDeck.isCardASound( card ) ) {
+		else if( ReadingCardEditor.isStringASound( this.sound_word_or_sentence) ) {
 			// Check if our card has audio tags.
-			if( ! CardDBTagManager.hasAudioTag( this.db_line ) ) {
+			if ( ! CardDBTagManager.hasAudioTag( this.card_audio ) ) {
 				// No Audio tags.
 				return false;
 			}
 
 			// Check if all of the tags have their files.
-			if( doAllFilesExistInList( image_list ) ) {
+			ArrayList<String> audio_list = getAudioFilePaths();
+			if ( doAllFilesExistInList( audio_list ) ) {
 				return true;
 			} else {
 				return false;
@@ -804,28 +919,12 @@ class IncompleteReadingCard {
 	 * Check if a file exists or not.
 	 */
 	public static boolean doesFileExist( String filename ) {
-		File media_file = new File( filename );
-		if( media_file.exists() ) {
-			return true;
-		} else {
-			return false;
-		}
+		return MyFlashcardManager.doesFileExist( filename );
 	}
 
 	/** Check if all of the files in a list of string filepaths exist. */
 	public static boolean doAllFilesExistInList( ArrayList<String> all_filenames ) {
-		if( all_filenames.size() == 0 ) {
-			return false;
-		}
-		else {
-			for( int i = 0; i < all_filenames.size(); i++ ) {
-				if( ! doesFileExist( all_filenames.get(i) ) ) {
-					return false;
-				}
-			}
-		}
-
-		return true;
+		return MyFlashcardManager.doAllFilesExistInList( all_filenames );
 	}
 
 	public void addAudio( String file_path ) {
@@ -834,20 +933,24 @@ class IncompleteReadingCard {
 	public void addImage( String file_path ) {
 		updated_image_list.add( file_path );
 	}
-	
+
 	public void addReadAlongTimings( String file_path ) {
 		updated_read_along_timings_list.add( file_path );
 	}
-	
+
 	/*
-	 * Make the updated card just an empty string .
-	 * The empty string is a way of shoeing that we
+	 * Make the updated card just an empty string.
+	 * The empty string is a way of showing that we
 	 * don't want that image when we save the updated card.
 	 */
 	public void removeAudio( int index ) {
 		updated_audio_list.set( index, "" );
 	}
 	
+	public String getText() {
+		return this.card_text;
+	}
+
 	public void setImage( int index, String file_path ) {
 		if( index >= image_list.size() ) {
 			updated_image_list.add( file_path );
@@ -855,7 +958,7 @@ class IncompleteReadingCard {
 			updated_image_list.set( index, file_path );
 		}
 	}
-	
+
 	public void setAudio( int index, String file_path ) {
 		if( index >= audio_list.size() ) {
 			updated_audio_list.add( file_path );
@@ -863,15 +966,15 @@ class IncompleteReadingCard {
 			updated_audio_list.set( index, file_path );
 		}
 	}
-	
-	public void setText( int index, String file_path ) {
-		if( index >= text_list.size() ) {
-			updated_text_list.add( file_path );
-		} else {
-			updated_text_list.set( index, file_path );
-		}
-	}
-	
+
+	//public void setText( int index, String text) {
+	//	if( index >= text_list.size() ) {
+	//		updated_text_list.add( text );
+	//	} else {
+	//		updated_text_list.set( index, text );
+	//	}
+	//}
+
 	public void setReadAlongTimings( int index, String file_path ) {
 		if( index >= read_along_timings_list.size() ) {
 			updated_read_along_timings_list.add( file_path );
@@ -879,17 +982,17 @@ class IncompleteReadingCard {
 			updated_read_along_timings_list.set( index, file_path );
 		}
 	}
-	
-	
+
+
 	public ArrayList<String> convertImageListTagsToFilePaths( ArrayList<String> original_list ) {
 		ArrayList<String> filepaths_list = new ArrayList<String>();
 
 		for( int i = 0; i < original_list.size(); i++ ) {
 			String filename = (String) CardDBTagManager.getImageFilename( original_list.get(i) );
 			filepaths_list.add( TextEditorDBManager.getDirectory() + filename );
-			
+
 		}
-		
+
 		return filepaths_list;
 	}
 
@@ -899,9 +1002,9 @@ class IncompleteReadingCard {
 		for( int i = 0; i < original_list.size(); i++ ) {
 			String filename = (String) CardDBTagManager.getAudioFilename( original_list.get(i) );
 			filepaths_list.add( TextEditorDBManager.getDirectory() + filename );
-			
+
 		}
-		
+
 		return filepaths_list;
 	}
 	public ArrayList<String> convertReadAlongTimingsListTagsToFilePaths( ArrayList<String> original_list ) {
@@ -910,12 +1013,12 @@ class IncompleteReadingCard {
 		for( int i = 0; i < original_list.size(); i++ ) {
 			String filename = (String) CardDBTagManager.getReadAlongTimingsFilename( original_list.get(i) );
 			filepaths_list.add( TextEditorDBManager.getDirectory() + filename );
-			
+
 		}
-		
+
 		return filepaths_list;
 	}
-	
+
 	/**
 	 * Will compare 2 lists and will return a merged list where data from the updated list is preferred over the original list's elements..
 	 * @param original_list
@@ -935,16 +1038,16 @@ class IncompleteReadingCard {
 				list.add( filename );
 			}
 		}
-		
+
 		// Scan through the remaining cards in the updated list.
 		for( int i = original_list.size(); i < updated_list.size(); i++ ) {
 			String filename = updated_list.get(i);
 			list.add( filename );
 		}
-		
+
 		return list;
 	}
-	
+
 	public ArrayList<String> getImageFilePaths() {
 		return __getUpdatedMergedList( this.image_list, this.updated_image_list );
 	}
@@ -954,9 +1057,6 @@ class IncompleteReadingCard {
 	public ArrayList<String> getReadAlongTimingsFilePaths() {
 		return __getUpdatedMergedList( this.read_along_timings_list, this.updated_read_along_timings_list );
 	}
-	public ArrayList<String> getText() {
-		return __getUpdatedMergedList( this.text_list, this.updated_text_list );
-	}
 }
 
 /**
@@ -964,11 +1064,13 @@ class IncompleteReadingCard {
  *
  */
 class MyFlashcardManager {
-	ArrayList<IncompleteReadingCard> incomplete_cards;
-	ArrayList<IncompleteReadingCard> complete_cards;
+	ArrayList<ReadingCardEditor> incomplete_cards;
+	ArrayList<ReadingCardEditor> complete_cards;
+
+	Connection db_connection;
 
 	// Used to know which card we are displaying on the screen.
-	IncompleteReadingCard current_card;
+	ReadingCardEditor current_card;
 	boolean is_current_card_in_the_completed_list;
 
 	// Frame components
@@ -1032,7 +1134,8 @@ class MyFlashcardManager {
 		
 		public void actionPerformed( ActionEvent event ) {
 			// Get the sentence from the card and turn it into a list of words that we can pass.
-			ArrayList<String> words = TeachingTinaReadingLessonCreator.getWordsListFromText( ReadingLessonDeck.getCardText( getCurrentCard().card ).get(0) );
+			getCurrentCard();
+			ArrayList<String> words = TeachingTinaReadingLessonCreator.getWordsListFromText( getCurrentCard().getText() );
 			
 			File audio_file   = new File( audio_file_path );
 			File timings_file = new File( timings_file_path );
@@ -1041,8 +1144,9 @@ class MyFlashcardManager {
 		}
 	}
 
-	MyFlashcardManager() {
-		loadCards();
+	MyFlashcardManager( Connection db_connection ) {
+		this.db_connection = db_connection;
+		loadCards( this.db_connection );
 		
 		frame = new JFrame( "Incomplete Reading Cards" );
 		
@@ -1256,8 +1360,32 @@ class MyFlashcardManager {
 		frame.setExtendedState( JFrame.MAXIMIZED_BOTH );
 	}
 
+	/**
+	 * Check if a file exists or not.
+	 */
 	public static boolean doesFileExist( String filename ) {
-		return IncompleteReadingCard.doesFileExist( filename );
+		File media_file = new File( filename );
+		if( media_file.exists() ) {
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	/** Check if all of the files in a list of string filepaths exist. */
+	public static boolean doAllFilesExistInList( ArrayList<String> all_filenames ) {
+		if( all_filenames.size() == 0 ) {
+			return false;
+		}
+		else {
+			for( int i = 0; i < all_filenames.size(); i++ ) {
+				if( ! doesFileExist( all_filenames.get(i) ) ) {
+					return false;
+				}
+			}
+		}
+
+		return true;
 	}
 	/**
 	 * Check if the files dropped are valid media
@@ -1304,33 +1432,36 @@ class MyFlashcardManager {
 				}
 			}
 
-			// If it's an image, add an image tag.
-			if( match_image.find() ) {
-				// Save the new image
-				if( (current_card.image_list.size() == 1)
-				 && (current_card.updated_image_list.get(0) == null) ) {
-					// Save the new image as the one to replace the original.
-					// Test if the image file is not found.
-					String image_filename = current_card.image_list.get( 0 );
-					File image_file = new File( image_filename );
+			// Don't add images if it's a 'sound' card.
+			if ( getCurrentCard().isCardAWord() || getCurrentCard().isCardASentence() ) {
+				// If it's an image, add an image tag.
+				if( match_image.find() ) {
+					// Save the new image
+					if( (current_card.image_list.size() == 1)
+					 && (current_card.updated_image_list.get(0) == null) ) {
+						// Save the new image as the one to replace the original.
+						// Test if the image file is not found.
+						String image_filename = current_card.image_list.get( 0 );
+						File image_file = new File( image_filename );
 
-					if( image_file.exists() ) {
-						// Append the new image to the end of the list
+						if( image_file.exists() ) {
+							// Append the new image to the end of the list
+							current_card.addImage( file_name );
+						}
+						else {
+							// If it's not, then add it to the updated list.
+							// Replacing the pre generated image.
+							current_card.setImage( 0, file_name );
+						}
+					} else {
+						//Just add the new image.
 						current_card.addImage( file_name );
 					}
-					else {
-						// If it's not, then add it to the updated list.
-						// Replacing the pre generated image.
-						current_card.setImage( 0, file_name );
-					}
-				} else {
-					//Just add the new image.
-					current_card.addImage( file_name );
 				}
 			}
 			
 			// If it's a it's a read-along-timing and the card is a sentence, add the read-along-timing tag
-			if ( ReadingLessonDeck.isCardSentenceMode( current_card.card ) ) {
+			if ( getCurrentCard().isCardASentence() ) {
 				if( match_read_along_timing.find() ) {
 					current_card.updated_read_along_timings_list.add( file_name );
 				}
@@ -1517,7 +1648,7 @@ class MyFlashcardManager {
 		current_card.read_along_timings_list = moveFilesAndGetUpdatedList( current_card.read_along_timings_list, current_card.updated_read_along_timings_list );
 		
 		// Saves the card and updates it.
-		current_card.saveToDatabase();
+		current_card.saveToDatabase( this.db_connection );
 		
 		// Move the card to the completed list if it's not already in there
 		if( ! is_current_card_in_the_completed_list ) {
@@ -1535,61 +1666,54 @@ class MyFlashcardManager {
 		displayCard(current_card, true);
 	}
 
-
 	/**
 	 * Scans through all reading lesson files and populates
 	 * the complete_cards and incomplete_cards lists based
 	 * on whether they are missing any media.
 	 */
-	public void loadCards() {
-		this.complete_cards   = new ArrayList<IncompleteReadingCard>();
-		this.incomplete_cards = new ArrayList<IncompleteReadingCard>();
+	public void loadCards( Connection db_connection ) {
+		this.complete_cards   = new ArrayList<ReadingCardEditor>();
+		this.incomplete_cards = new ArrayList<ReadingCardEditor>();
 
-		// Read in every Line from every database and add them to either the incomplete list or complete list.
-		// Get a list of all lesson files
-		ArrayList<String> all_lesson_files = TextEditorDBManager.getAllLessonFiles();
 
-		/**
-		 * Scan through these and setup our array of lessons.
-		 **/
-		for(int i = 0; i < all_lesson_files.size(); i++ ) {
-			// Load the database file into memory.
-			File file = new File( all_lesson_files.get(i) );
-			
-			// Scan through the contents and see if it's a card, and if it appears to be, then see if it's missing any media.
-			try( BufferedReader br = new BufferedReader( new FileReader( file ) ) ) {
-				String line = "";
-				CardsGroup current_card_group = null;
-				int line_number = -1; // Increments on the start of the loop, so the starting value is really 0.
+		// Load cards from database and add to incomplete and completed lists.
+		try {
+			String sql_query = "SELECT * FROM " + SQLiteReadingLessonHandler.TABLE_NAME + " ORDER BY card_id ASC;";
+			Statement stat = db_connection.createStatement();
 
-				while( ( line = br.readLine() ) != null ) {
-					line_number++;
-					if( CardDBManager.isDBLineAGroup( line.split("\t") ) ) {
-						// Get the current group name and save it.
-						String group_name = line.split("\t")[ CardsGroup.INDEX_NAME ];
-						current_card_group = new CardsGroup(group_name, null);
-					}
-
-					if( CardDBManager.isDBLineACard( line.split("\t") ) ) {
-						IncompleteReadingCard card = new IncompleteReadingCard(line, line_number, current_card_group, file);
-						
-						// It's a valid flashcard line, so now check if there's any media missing from it.
-						if( card.isCardComplete() ) {
-							complete_cards.add( card );
-						} else {
-							incomplete_cards.add( card );
-						}
-					}
+			ResultSet rs = stat.executeQuery( sql_query );
+			while( rs.next() ) {
+				boolean is_spelling_mode;
+				if( rs.getInt( "is_spelling_mode" ) == 1 ) {
+					is_spelling_mode = true;
+				} else {
+					is_spelling_mode = false;
 				}
 
-			} catch (FileNotFoundException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
+				ReadingCardEditor card = new ReadingCardEditor (
+					rs.getInt   ( "card_id" ),
+					rs.getLong  ( "date_in_millis" ),
+					rs.getInt   ( "box_num" ),
+					rs.getInt   ( "reading_lesson_level" ),
+					rs.getString( "sound_type" ),
+					rs.getString( "sound_word_or_sentence" ),
+					rs.getInt   ( "id_of_linked_card" ),
+					is_spelling_mode,
+					rs.getString( "card_text" ),
+					rs.getString( "card_images" ),
+					rs.getString( "card_audio" ),
+					rs.getString( "card_read_along_timings" )
+				);
 
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
+				// Add the card to the completed or incompleted list.
+				if( card.isCardComplete() ) {
+					complete_cards.add( card );
+				} else {
+					incomplete_cards.add( card );
+				}
 			}
+		} catch ( SQLException e ) {
+			e.printStackTrace();
 		}
 	}
 
@@ -1598,11 +1722,12 @@ class MyFlashcardManager {
 	 * word, sound, or sentence from a reading lesson card.
 	 * Sentences will be truncated to a width of MAXIMUM_JLIST_STRING_LENGTH.
 	 */
-	public String[] makeStringArrayFromCards ( ArrayList<IncompleteReadingCard> cards ) {
+	public String[] makeStringArrayFromCards ( ArrayList<ReadingCardEditor> cards ) {
 		ArrayList<String> card_front_list = new ArrayList<String>();
 
 		for( int i = 0; i < cards.size(); i++ ) {
-			String text = cards.get(i).card.getContent( ReadingLessonDeck.INDEX_TEXT );
+			String text = cards.get(i).getText();
+			cards.get(i).getText();
 
 			// Truncate the string if it's too long.
 			if( text.length() > MAXIMUM_JLIST_STRING_LENGTH ) {
@@ -1617,10 +1742,10 @@ class MyFlashcardManager {
 		return card_front_list.toArray( new String[ card_front_list.size() ] );
 	}
 
-	public IncompleteReadingCard getCurrentCard() {
+	public ReadingCardEditor getCurrentCard() {
 		return this.current_card;
 	}
-	public void setCurrentCard( IncompleteReadingCard card) {
+	public void setCurrentCard( ReadingCardEditor card) {
 		this.current_card = card;
 	}
 	public void setIsCurrentCardInTheCompletedList( boolean b ) {
@@ -1631,7 +1756,7 @@ class MyFlashcardManager {
 	 * Draw the card on the screen.
 	 * @param card
 	 */
-	public void displayCard( IncompleteReadingCard card, boolean is_force_refresh ) {
+	public void displayCard( ReadingCardEditor card, boolean is_force_refresh ) {
 		if( ! is_force_refresh ) {
 			// Stop this method from being ran when we are already displaying the card.
 			if( card == getCurrentCard() ) {
@@ -1642,7 +1767,7 @@ class MyFlashcardManager {
 		}
 		
 		
-		ArrayList<String> text_list = card.getText();
+		ArrayList<String> text_list = CardDBTagManager.makeStringAList( card.getText() );
 		ArrayList<String> image_list = card.getImageFilePaths();
 		ArrayList<String> audio_list = card.getAudioFilePaths();
 		ArrayList<String> read_along_timings_list = card.getReadAlongTimingsFilePaths();
@@ -1728,14 +1853,11 @@ class MyFlashcardManager {
 			panel.add( text_pane );
 		}
 
-		panel.add( padding_label_1 );
-		panel.add( new JSeparator() );
-
-
 		// Display Card's images.
-		panel.add( card_image_title );
-
-		if( ReadingLessonDeck.isCardASentence( getCurrentCard().card ) || ReadingLessonDeck.isCardAWord( getCurrentCard().card ) ) {
+		if( card.isCardASentence() || card.isCardAWord() ) {
+			panel.add( padding_label_1 );
+			panel.add( new JSeparator() );
+			panel.add( card_image_title );
 			if( image_list.size() == 0 ) {
 				// Display "media missing" label.
 				JLabel label_missing = new JLabel( "Missing image - drag and drop image files here to add them.");
@@ -1802,21 +1924,7 @@ class MyFlashcardManager {
 					// Add the audio player button.
 					JButton audio_button = new JButton( filepath );
 					audio_button.setAlignmentX( Component.CENTER_ALIGNMENT );
-					audio_button.addActionListener( new ActionListener() {
-						public void actionPerformed( ActionEvent event ) {
-							try {
-								MyAudioPlayer audio_player = new MyAudioPlayer( new File("/home/simon/MyStuff/Programming/eclipse-workspace/TeachingTinaReadingLessonCreator/Tinas Reading Lessons/sentences/Reading Lesson 0001 - Sentence.wav"));
-								audio_player.play();
-								
-							} catch (UnsupportedAudioFileException e) {
-								e.printStackTrace();
-							} catch (IOException e) {
-								e.printStackTrace();
-							} catch (LineUnavailableException e) {
-								e.printStackTrace();
-							}
-						}
-					});
+					audio_button.addActionListener( new AudioActionListener( filepath ) );
 					panel.add( audio_button );
 
 					if( i < audio_list.size() -1 ) {
@@ -1842,7 +1950,7 @@ class MyFlashcardManager {
 
 
 		// Display Card's read along timings.
-		if( (audio_list.size() > 0) && ReadingLessonDeck.isCardASentence( getCurrentCard().card ) ) {
+		if( (audio_list.size() > 0) && card.isCardASentence() ) {
 			panel.add( card_read_along_timings_title );
 
 			if( read_along_timings_list.isEmpty() ) {
@@ -1855,11 +1963,7 @@ class MyFlashcardManager {
 			}
 			else {
 				// loop through the list and add a button or a missing error for each file.
-				JLabel lbl_rat_found = new JLabel("Read Along Timing Found.");
-				lbl_rat_found.setFont( large_font );
-				lbl_rat_found.setForeground( DARK_GREEN );
-				lbl_rat_found.setAlignmentX( Component.CENTER_ALIGNMENT );
-				panel.add( lbl_rat_found );
+				JLabel lbl_rat_found = new JLabel("");
 
 
 				for( int i = 0; i < read_along_timings_list.size(); i++ ) {
@@ -1875,10 +1979,19 @@ class MyFlashcardManager {
 
 						if( doesFileExist( timings_filepath) ) {
 							rat_button.setText ( "<html><b>Edit Read Along Timing</b><br>" + timings_filepath + "</html>" );
+							lbl_rat_found = new JLabel("Read Along Timing Found.");
+							lbl_rat_found.setFont( large_font );
+							lbl_rat_found.setForeground( DARK_GREEN );
+							lbl_rat_found.setAlignmentX( Component.CENTER_ALIGNMENT );
 						} else {
 							rat_button.setText ( "<html><b>Create Read Along Timing</b><br>" + timings_filepath + "</html>" );
+							lbl_rat_found = new JLabel("Need to Create a Read Along Timing.");
+							lbl_rat_found.setFont( large_font );
+							lbl_rat_found.setForeground( DARK_RED );
+							lbl_rat_found.setAlignmentX( Component.CENTER_ALIGNMENT );
 						}
 
+						panel.add( lbl_rat_found );
 						rat_button.addActionListener( rat_listener );
 						panel.add( rat_button );
 
@@ -1907,7 +2020,7 @@ class MyFlashcardManager {
 				}
 			}
 		}
-		else if( audio_list.size() == 0 && ReadingLessonDeck.isCardSentenceMode( getCurrentCard().card ) ) {
+		else if( audio_list.size() == 0 && card.isCardASentence() ) {
 			for( int i = 0; i < read_along_timings_list.size(); i++ ) {
 				String filename = read_along_timings_list.get( i );
 				JButton button_rat_creator = new JButton( "Edit read along timings.");
@@ -1938,7 +2051,7 @@ class MyFlashcardManager {
 
 
 		// Update the heading to show if the card is completed or not.
-		if( getCurrentCard().isCardComplete() ) {
+		if( card.isCardComplete() ) {
 			Border border = BorderFactory.createLineBorder( DARK_GREEN, BORDER_THICKNESS );
 			card_completion_title.setBorder( border );
 
@@ -2508,4 +2621,25 @@ class MyScrollableJPanel extends JPanel implements Scrollable {
     public boolean getScrollableTracksViewportHeight() {
         return false;
     }
+}
+
+class AudioActionListener implements ActionListener {
+	String filepath;
+
+	AudioActionListener( String filepath ) {
+		this.filepath = filepath;
+		
+	}
+	public void actionPerformed( ActionEvent event ) {
+		try {
+			MyAudioPlayer audio_player = new MyAudioPlayer( new File( this.filepath ));
+			audio_player.play();
+		} catch ( UnsupportedAudioFileException e ) {
+			e.printStackTrace();
+		} catch ( IOException e ) {
+			e.printStackTrace();
+		} catch ( LineUnavailableException e ) {
+			e.printStackTrace();
+		}
+	}
 }
