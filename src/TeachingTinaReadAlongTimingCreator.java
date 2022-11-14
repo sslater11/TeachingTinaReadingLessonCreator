@@ -39,19 +39,18 @@ public class TeachingTinaReadAlongTimingCreator {
 	private MyAudioPlayer audio_player;
 	private MyAudioButton button_play_stop;
 	private ArrayList<MyTimingJLabel> words_list;
-	private File timings_file;
+	private String[] timings_list;
 	private File audio_file;
 	private MyFlashcardManager main_app;
 	
-	TeachingTinaReadAlongTimingCreator( ArrayList<String> words, File audio_file, File timings_file, MyFlashcardManager main_app ) {
-		this. main_app = main_app;
-		this.audio_file = audio_file;
-		this.timings_file = timings_file;
+	TeachingTinaReadAlongTimingCreator( ArrayList<String> words, File audio_file, String timings, MyFlashcardManager main_app ) {
+		this.main_app     = main_app;
+		this.audio_file   = audio_file;
 
 		this.frame = new JFrame( "Read Along Timing Creator" );
 		frame.setDefaultCloseOperation( JFrame.DISPOSE_ON_CLOSE );
 		
-		button_save_timings = new JButton( "Save timings to file" );
+		button_save_timings = new JButton( "Save timings." );
 		button_save_timings.addActionListener( new TeachingTinaReadAlongTimingCreator.SaveTimingsActionListener() );
 		button_play_stop = new MyAudioButton();
 		button_play_stop.addActionListener( new TeachingTinaReadAlongTimingCreator.PlayStopAudioListener() );
@@ -62,8 +61,10 @@ public class TeachingTinaReadAlongTimingCreator {
 		frame.add( button_play_stop );
 		button_play_stop.requestFocus();
 		
+		// Create the words list
 		createWordJLabels( words );
-		loadTimingsArrayFromFile( timings_file );
+		// Now the words list exists, we can load the previous timings, if there were any.
+		loadTimings( timings );
 		
 		frame.setVisible(true);
 
@@ -91,8 +92,7 @@ public class TeachingTinaReadAlongTimingCreator {
 			this.frame.add( this.words_list.get(i) );
 		}
 	}
-
-	public void saveTimingsArrayToFile( File timings_file ) {
+	public void saveTimings() {
 		String line = "";
 		for( int i = 0; i < words_list.size(); i++ ) {
 			
@@ -112,49 +112,30 @@ public class TeachingTinaReadAlongTimingCreator {
 			}
 		}
 		
-		// Create the directories so we can save to the timings file.
-		File make_directory = new File( timings_file.getParent() );
-		make_directory.mkdirs();
+		// Update the timings.
+		main_app.getCurrentCard().setReadAlongTimings( line );
 
-		// Write to the timings file.
-		try ( BufferedWriter bw = new BufferedWriter( new FileWriter( timings_file ) ) ) {
-			bw.write( line );
-			JOptionPane.showMessageDialog(frame, "Timings have been saved to the file\n" + timings_file.toString(), "Saved Timings", JOptionPane.PLAIN_MESSAGE);
-			
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-
-		// Update the flashcard view of our card, as we now have a timings file.
+		// Update the flashcard view of our card, as we now have a timing.
 		main_app.displayCard( main_app.getCurrentCard(), true );
-	}
-	
-	public void loadTimingsArrayFromFile( File timings_file ) {
-		// Read in the timings line.
-		String timings_line = "";
-		try( BufferedReader br = new BufferedReader( new FileReader( timings_file ) ) ) {
-			String line = "";
-			while( (line = br.readLine()) != null ) {
-				timings_line = line;
-			}
 
+		this.frame.dispose();
+	}
+
+	public void loadTimings( String str_timings ) {
+		if( str_timings != null ) {
 			// Split it and parse it into long ints.
-			String[] str_timings = timings_line.split( "\t" );
-		
+			String[] timings = str_timings.split( "\t" );
+	
 			for( int i = 0; i < words_list.size(); i++ ) {
-				words_list.get(i).start_position_in_millis = Long.parseLong( str_timings[(i * 2)] );
-				words_list.get(i).end_position_in_millis   = Long.parseLong( str_timings[(i * 2)+1] );
+				words_list.get(i).start_position_in_millis = Long.parseLong( timings[(i * 2)] );
+				words_list.get(i).end_position_in_millis   = Long.parseLong( timings[(i * 2)+1] );
 			}
-		} catch (FileNotFoundException e) {
-			// Do nothing.
-		} catch (IOException e) {
-			// Do nothing.
 		}
 	}
 
 	class SaveTimingsActionListener implements ActionListener {
 		public void actionPerformed( ActionEvent event ) {
-			saveTimingsArrayToFile( timings_file );
+			saveTimings();
 		}
 		
 	}

@@ -561,15 +561,15 @@ public class TeachingTinaReadingLessonCreator {
 	private class PreviewLessonActionListener implements ActionListener {
 
 		public void actionPerformed(ActionEvent e) {
-			ReadingLessonCreator deck = new ReadingLessonCreator( getPreviousLesson(), getTextFromEditor() );
+			//ReadingLessonCreator deck = new ReadingLessonCreator( getPreviousLesson(), getTextFromEditor() );
 
-			if( deck.hasNewWords() ) {
-				String all_lines = "";
-				for( String i : TextEditorDBManager.getDatabaseOutput( deck ) ) {
-					all_lines += i + "\n";
-				}
-				new PreviewLessonJFrame( all_lines );
-			}
+			//if( deck.hasNewWords() ) {
+			//	String all_lines = "";
+			//	for( String i : TextEditorDBManager.getDatabaseOutput( deck ) ) {
+			//		all_lines += i + "\n";
+			//	}
+			//	new PreviewLessonJFrame( all_lines );
+			//}
 		}
 	}
 
@@ -644,13 +644,12 @@ class ReadingCardEditor {
 	ArrayList<String> text_list;
 	ArrayList<String> image_list;
 	ArrayList<String> audio_list;
-	ArrayList<String> read_along_timings_list;
 
 	/*
 	 * These lists will either be the same size as the lists stored in the card, or they'll be larger for adding new content.
 	 */
+	public String updated_read_along_timings;
 	public ArrayList<String> updated_text_list;
-	public ArrayList<String> updated_read_along_timings_list;
 	public ArrayList<String> updated_audio_list;
 	public ArrayList<String> updated_image_list;
 
@@ -722,9 +721,8 @@ class ReadingCardEditor {
 
 		image_list = convertImageListTagsToFilePaths( CardDBTagManager.makeStringAList( card_images ) );
 		audio_list = convertAudioListTagsToFilePaths( CardDBTagManager.makeStringAList( card_audio ) );
-		read_along_timings_list = convertReadAlongTimingsListTagsToFilePaths( CardDBTagManager.makeStringAList( card_read_along_timings ) );
 
-		resetAllUpdatedLists();
+		resetAllUpdatedFields();
 	}
 	
 	public static boolean isStringAWord( String str ) {
@@ -765,7 +763,6 @@ class ReadingCardEditor {
 		// Get all the media tags
 		String card_images = "";
 		String card_audio = "";
-		String card_read_along_timings = "";
 
 		for (int i = 0; i < updated_audio_list.size(); i++) {
 			String path = MyFlashcardManager.getMediaUpdatedFilePath( audio_list, updated_audio_list, i );
@@ -779,15 +776,8 @@ class ReadingCardEditor {
 			card_images += "<image:\"" + path + "\">";
 		}
 
-		for (int i = 0; i < updated_read_along_timings_list.size(); i++) {
-			String path = MyFlashcardManager.getMediaUpdatedFilePath( read_along_timings_list,
-			                                                          updated_read_along_timings_list, i );
-			path = path.replaceAll(TextEditorDBManager.getDirectory(), "");
-			card_read_along_timings += "<read-along-timing:\"" + path + "\">";
-		}
-
 		// Save the media tags to the database
-		SQLiteReadingLessonHandler.updateCardMedia( db_connection, card_id, card_images, card_audio, card_read_along_timings );
+		SQLiteReadingLessonHandler.updateCardMedia( db_connection, card_id, card_images, card_audio, this.card_read_along_timings );
 		// Update and reset our stored card, just for consistency.
 		initAndReset(
 			this.card_id,
@@ -811,20 +801,19 @@ class ReadingCardEditor {
 		updated_text_list
 		updated_audio_list
 		updated_image_list
-		updated_read_along_timings_list
+		
+		Sets this string to null aswell
+		updated_read_along_timings
 	 */
-	public void resetAllUpdatedLists() {
+	public void resetAllUpdatedFields() {
 		updated_text_list  = new ArrayList<String>();
 		updated_audio_list = new ArrayList<String>();
 		updated_image_list = new ArrayList<String>();
-		updated_read_along_timings_list = new ArrayList<String> ();
+		updated_read_along_timings = null;
 
 		// Populate the updated lists with null values to show that the current card has no new updated fields.
 		for( int i = 0; i < text_list.size(); i++ ) {
 			updated_text_list.add( null );
-		}
-		for( int i = 0; i < read_along_timings_list.size(); i++ ) {
-			updated_read_along_timings_list.add( null );
 		}
 		for( int i = 0; i < audio_list.size(); i++ ) {
 			updated_audio_list.add( null );
@@ -849,7 +838,7 @@ class ReadingCardEditor {
 			}
 
 			// Check if our card has read_along timings tags.
-			else if( ! CardDBTagManager.hasReadAlongTimingsTag( this.card_read_along_timings ) ) {
+			else if( this.card_read_along_timings == null  ) {
 				// No Read Along Timings tags.
 				return false;
 			}
@@ -857,11 +846,9 @@ class ReadingCardEditor {
 			// Check if all of the tags have their files.
 			ArrayList<String> image_list = getImageFilePaths();
 			ArrayList<String> audio_list = getAudioFilePaths();
-			ArrayList<String> read_along_timings_list = getReadAlongTimingsFilePaths();
 
 			if( doAllFilesExistInList(              image_list ) &&
-			    doAllFilesExistInList(              audio_list ) &&
-			    doAllFilesExistInList( read_along_timings_list ) )
+			    doAllFilesExistInList(              audio_list ) )
 			{
 				return true;
 			} else {
@@ -934,8 +921,8 @@ class ReadingCardEditor {
 		updated_image_list.add( file_path );
 	}
 
-	public void addReadAlongTimings( String file_path ) {
-		updated_read_along_timings_list.add( file_path );
+	public void setReadAlongTimings( String timings ) {
+		updated_read_along_timings = timings;
 	}
 
 	/*
@@ -949,6 +936,14 @@ class ReadingCardEditor {
 	
 	public String getText() {
 		return this.card_text;
+	}
+	
+	public String getReadAlongTimings() {
+		if( this.updated_read_along_timings != null ) {
+			return this.updated_read_along_timings;
+		} else {
+			return this.card_read_along_timings;
+		}
 	}
 
 	public void setImage( int index, String file_path ) {
@@ -974,14 +969,6 @@ class ReadingCardEditor {
 	//		updated_text_list.set( index, text );
 	//	}
 	//}
-
-	public void setReadAlongTimings( int index, String file_path ) {
-		if( index >= read_along_timings_list.size() ) {
-			updated_read_along_timings_list.add( file_path );
-		} else {
-			updated_read_along_timings_list.set( index, file_path );
-		}
-	}
 
 
 	public ArrayList<String> convertImageListTagsToFilePaths( ArrayList<String> original_list ) {
@@ -1054,9 +1041,6 @@ class ReadingCardEditor {
 	public ArrayList<String> getAudioFilePaths() {
 		return __getUpdatedMergedList( this.audio_list, this.updated_audio_list );
 	}
-	public ArrayList<String> getReadAlongTimingsFilePaths() {
-		return __getUpdatedMergedList( this.read_along_timings_list, this.updated_read_along_timings_list );
-	}
 }
 
 /**
@@ -1125,11 +1109,11 @@ class MyFlashcardManager {
 	class ReadAlongTimingsActionListener implements ActionListener {
 		MyFlashcardManager main_app;
 		String audio_file_path;
-		String timings_file_path;
-		public ReadAlongTimingsActionListener( MyFlashcardManager main_app, String audio_file_path, String timings_file_path ) {
+		String timings;
+		public ReadAlongTimingsActionListener( MyFlashcardManager main_app, String audio_file_path, String timings ) {
 			this.main_app = main_app;
 			this.audio_file_path = audio_file_path;
-			this.timings_file_path = timings_file_path;
+			this.timings = timings;
 		}
 		
 		public void actionPerformed( ActionEvent event ) {
@@ -1138,9 +1122,7 @@ class MyFlashcardManager {
 			ArrayList<String> words = TeachingTinaReadingLessonCreator.getWordsListFromText( getCurrentCard().getText() );
 			
 			File audio_file   = new File( audio_file_path );
-			File timings_file = new File( timings_file_path );
-			
-			TeachingTinaReadAlongTimingCreator timing_creator = new TeachingTinaReadAlongTimingCreator( words, audio_file, timings_file, this.main_app );
+			TeachingTinaReadAlongTimingCreator timing_creator = new TeachingTinaReadAlongTimingCreator( words, audio_file, timings, this.main_app );
 		}
 	}
 
@@ -1460,13 +1442,6 @@ class MyFlashcardManager {
 				}
 			}
 			
-			// If it's a it's a read-along-timing and the card is a sentence, add the read-along-timing tag
-			if ( getCurrentCard().isCardASentence() ) {
-				if( match_read_along_timing.find() ) {
-					current_card.updated_read_along_timings_list.add( file_name );
-				}
-			}
-			
 			// call the displayCard()to display the new additions.
 			displayCard( current_card, true );
 		}
@@ -1645,7 +1620,7 @@ class MyFlashcardManager {
 		// Update the lists with new data
 		current_card.audio_list = moveFilesAndGetUpdatedList( current_card.audio_list, current_card.updated_audio_list );
 		current_card.image_list = moveFilesAndGetUpdatedList( current_card.image_list, current_card.updated_image_list );
-		current_card.read_along_timings_list = moveFilesAndGetUpdatedList( current_card.read_along_timings_list, current_card.updated_read_along_timings_list );
+		current_card.card_read_along_timings = current_card.updated_read_along_timings;
 		
 		// Saves the card and updates it.
 		current_card.saveToDatabase( this.db_connection );
@@ -1664,6 +1639,13 @@ class MyFlashcardManager {
 
 		// Draw it on screen.
 		displayCard(current_card, true);
+		
+		// Move on to the next card automatically for us.
+		if( incomplete_cards.size() > 0 ) {
+			incomplete_cards_list.setSelectedIndex( 0 );
+			setIsCurrentCardInTheCompletedList( false );
+			displayCard( incomplete_cards.get(0), true );
+		}
 	}
 
 	/**
@@ -1770,7 +1752,7 @@ class MyFlashcardManager {
 		ArrayList<String> text_list = CardDBTagManager.makeStringAList( card.getText() );
 		ArrayList<String> image_list = card.getImageFilePaths();
 		ArrayList<String> audio_list = card.getAudioFilePaths();
-		ArrayList<String> read_along_timings_list = card.getReadAlongTimingsFilePaths();
+		String read_along_timings = card.getReadAlongTimings();
 
 		// Used later to check if we should display the "Completed" or "Incomplete" heading at the top of the card display.
 		MyScrollableJPanel panel = new MyScrollableJPanel();
@@ -1950,102 +1932,47 @@ class MyFlashcardManager {
 
 
 		// Display Card's read along timings.
-		if( (audio_list.size() > 0) && card.isCardASentence() ) {
+		if( (audio_list.size() >= 0) && card.isCardASentence() ) {
 			panel.add( card_read_along_timings_title );
 
-			if( read_along_timings_list.isEmpty() ) {
+			if( read_along_timings == null ) {
 				// Display "media missing" label.
 				JLabel label_missing = new JLabel( "Missing read along timings.");
 				label_missing.setFont( medium_font );
 				label_missing.setForeground( DARK_RED );
 				label_missing.setAlignmentX( Component.CENTER_ALIGNMENT );
+
+				JButton rat_button = new JButton();
+				rat_button.setText ( "<html><b>Create Read Along Timing</b></html>" );
+				rat_button.setAlignmentX( Component.CENTER_ALIGNMENT );
+				
+				ReadAlongTimingsActionListener rat_listener = new ReadAlongTimingsActionListener( this, audio_list.get(0), read_along_timings );
+				rat_button.addActionListener( rat_listener );
+
 				panel.add( label_missing );
+				panel.add( rat_button );
 			}
 			else {
-				// loop through the list and add a button or a missing error for each file.
+				// Read along timings exists, so edit it.
 				JLabel lbl_rat_found = new JLabel("");
 
+				// Check if the timings file exists.
 
-				for( int i = 0; i < read_along_timings_list.size(); i++ ) {
-					// Check if the timings file exists.
-					String timings_filepath = read_along_timings_list.get( i );
+				JButton rat_button = new JButton();
+				rat_button.setFont( medium_font );
+				rat_button.setAlignmentX( Component.CENTER_ALIGNMENT );
 
-					if( (audio_list.size() > i) && doesFileExist( audio_list.get(i) ) ) {
-
-						JButton rat_button = new JButton();
-						rat_button.setFont( medium_font );
-						rat_button.setAlignmentX( Component.CENTER_ALIGNMENT );
-						ReadAlongTimingsActionListener rat_listener = new ReadAlongTimingsActionListener( this, audio_list.get(i), timings_filepath );
-
-						if( doesFileExist( timings_filepath) ) {
-							rat_button.setText ( "<html><b>Edit Read Along Timing</b><br>" + timings_filepath + "</html>" );
-							lbl_rat_found = new JLabel("Read Along Timing Found.");
-							lbl_rat_found.setFont( large_font );
-							lbl_rat_found.setForeground( DARK_GREEN );
-							lbl_rat_found.setAlignmentX( Component.CENTER_ALIGNMENT );
-						} else {
-							rat_button.setText ( "<html><b>Create Read Along Timing</b><br>" + timings_filepath + "</html>" );
-							lbl_rat_found = new JLabel("Need to Create a Read Along Timing.");
-							lbl_rat_found.setFont( large_font );
-							lbl_rat_found.setForeground( DARK_RED );
-							lbl_rat_found.setAlignmentX( Component.CENTER_ALIGNMENT );
-						}
-
-						panel.add( lbl_rat_found );
-						rat_button.addActionListener( rat_listener );
-						panel.add( rat_button );
-
-						if( i < read_along_timings_list.size() -1 ) {
-							// Add a blank spacer.
-							JLabel pad = new JLabel("  ");
-							pad.setFont(small_font);
-							panel.add( pad );
-						}
-					}
-					else {
-						// Display "file missing" label.
-						JButton rat_button = new JButton( "<html><b>Add audio to create/edit Read Along Timings.</b><br><br>" + timings_filepath + "</html>" );
-						rat_button.setFont( medium_font );
-						rat_button.setAlignmentX( Component.CENTER_ALIGNMENT );
-						rat_button.setEnabled( false );
-						panel.add( rat_button );
-
-						if( i < read_along_timings_list.size() -1 ) {
-							// Add a blank spacer.
-							JLabel pad = new JLabel("  ");
-							pad.setFont(small_font);
-							panel.add( pad );
-						}
-					}
-				}
-			}
-		}
-		else if( audio_list.size() == 0 && card.isCardASentence() ) {
-			for( int i = 0; i < read_along_timings_list.size(); i++ ) {
-				String filename = read_along_timings_list.get( i );
-				JButton button_rat_creator = new JButton( "Edit read along timings.");
-				JLabel lbl_rat_found = new JLabel("Read Along Timing Found.");
-				JLabel lbl_hint = new JLabel("Add audio to enable the button.");
-				JLabel lbl_rat_file_path = new JLabel( filename );
-			
-				lbl_hint.setFont( large_font );
-				lbl_hint.setForeground( DARK_RED );
-				lbl_hint.setAlignmentX( Component.CENTER_ALIGNMENT );
-
+				rat_button.setText ( "<html><b>Edit Read Along Timing</b></html>" );
+				lbl_rat_found = new JLabel("Read Along Timing Found.");
 				lbl_rat_found.setFont( large_font );
 				lbl_rat_found.setForeground( DARK_GREEN );
 				lbl_rat_found.setAlignmentX( Component.CENTER_ALIGNMENT );
 
-				lbl_rat_file_path.setFont( small_font );
-				lbl_rat_file_path.setForeground( DARK_RED );
-				lbl_rat_file_path.setAlignmentX( Component.CENTER_ALIGNMENT );
-			
-				button_rat_creator.setFont( medium_font );
-				button_rat_creator.setAlignmentX( Component.CENTER_ALIGNMENT );
-				button_rat_creator.setEnabled( false );
-			
+				ReadAlongTimingsActionListener rat_listener = new ReadAlongTimingsActionListener( this, audio_list.get(0), read_along_timings );
+				rat_button.addActionListener( rat_listener );
+
 				panel.add( lbl_rat_found );
-				panel.add( button_rat_creator );
+				panel.add( rat_button );
 			}
 		}
 
