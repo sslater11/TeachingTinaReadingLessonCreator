@@ -326,7 +326,7 @@ public class TeachingTinaReadingLessonCreator {
 		return false;
 	}
 	private void updateCurrentReadingLevel() {
-		this.lbl_reading_level.setText(("<html><b>Current reading level of known words is: " + getCurrentReadingLevel() + "&nbsp;&nbsp;&nbsp;&nbsp;Max reading level is: " + getMaxReadingLevel() + "</b></html>") );
+		this.lbl_reading_level.setText(("<html><b>Current reading level of known words is: <b><font style=\"color:red;\">" + getCurrentReadingLevel() + "</font></b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Max reading level is: <b><font style=\"color:red;\">" + getMaxReadingLevel() + "</font></b></html>") );
 	}
 	
 	public ReadingLessonCreator getPreviousLesson() {
@@ -573,10 +573,50 @@ public class TeachingTinaReadingLessonCreator {
 		}
 	}
 
-	
+	private boolean isLetterUpperCase( char ch ) {
+		if( ch >= 'A' && ch <= 'Z') {
+			return true;
+		} else {
+			return false;
+		}
+	}
 	private class CreateLessonActionListener implements ActionListener {
 		public void actionPerformed(ActionEvent e) {
 			ReadingLessonCreator deck = new ReadingLessonCreator( getPreviousLesson(), getTextFromEditor() );
+			List <String> words_list = deck.getWords();
+
+			for( int i = 0; i < words_list.size(); i++ ) {
+				String word = words_list.get(i);
+				
+				// If the word starts with a capital, then ask the user if we are keeping the capital letter.
+				
+				if( isLetterUpperCase( word.charAt(0) ) ) {
+					// Ask user if we want to keep the first letter as a capital letter.
+					
+					String message = "Is this word a proper noun?\n" +
+					                 "Word: " + word + "\n\n" +
+					                 "Do you want to keep the first letter capitalized?\n\n" +
+					                 "If you capitalize the first letter, the flashcard it creates will be of this word with a capital letter.\n" +
+					                 "This only makes sense if the word is a proper noun and is always written with a capital.";
+					int option_pane = JOptionPane.showConfirmDialog(frame, message, "Is word a proper noun?", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+					
+					if( option_pane == 0 ) {
+						// Yes was clicked.
+						
+						// Keep the capital at the start.
+						// Lower case everything else.
+						word = word.charAt(0) + word.substring(1).toLowerCase();
+					} else {
+						// No was clicked.
+						// Lower case the whole word.
+						word = word.toLowerCase();
+					}
+				} else {
+					word = word.toLowerCase();
+				}
+
+				words_list.set( i, word );
+			}
 			
 			if( deck.hasNewWords() ) {
 				// Write the SQLite database.
