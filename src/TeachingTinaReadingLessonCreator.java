@@ -1837,6 +1837,7 @@ class MyFlashcardManager {
 				saveCard();
 			}
 		});
+		button_save_card.setEnabled( false );
 
 		panel.add( button_save_card );
 	
@@ -2019,6 +2020,8 @@ class MyFlashcardManager {
 
 		// Update the heading to show if the card is completed or not.
 		if( card.isCardComplete() ) {
+			button_save_card.setEnabled( true );
+
 			Border border = BorderFactory.createLineBorder( DARK_GREEN, BORDER_THICKNESS );
 			card_completion_title.setBorder( border );
 
