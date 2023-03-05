@@ -878,7 +878,7 @@ class ReadingCardEditor {
 			}
 
 			// Check if our card has read_along timings tags.
-			else if( this.card_read_along_timings == null  ) {
+			else if( this.getReadAlongTimings() == null  ) {
 				// No Read Along Timings tags.
 				return false;
 			}
@@ -887,8 +887,8 @@ class ReadingCardEditor {
 			ArrayList<String> image_list = getImageFilePaths();
 			ArrayList<String> audio_list = getAudioFilePaths();
 
-			if( doAllFilesExistInList(              image_list ) &&
-			    doAllFilesExistInList(              audio_list ) )
+			if( doAllFilesExistInList( image_list ) &&
+			    doAllFilesExistInList( audio_list ) )
 			{
 				return true;
 			} else {
@@ -1831,6 +1831,8 @@ class MyFlashcardManager {
 
 		
 		JButton button_save_card = new JButton( "Save Card" );
+		button_save_card.setAlignmentX( Component.CENTER_ALIGNMENT );
+		button_save_card.setFont( medium_font );
 		
 		button_save_card.addActionListener(new ActionListener() {
 			public void actionPerformed( ActionEvent event ) {
