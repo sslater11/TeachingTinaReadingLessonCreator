@@ -798,6 +798,10 @@ class ReadingCardEditor {
 	public boolean isCardASound() {
 		return isStringASound( this.sound_word_or_sentence );
 	}
+	
+	public boolean isSpellingMode() {
+		return is_spelling_mode;
+	}
 
 	public void saveToDatabase( Connection db_connection ) {
 		// Get all the media tags
@@ -973,6 +977,14 @@ class ReadingCardEditor {
 	public void removeAudio( int index ) {
 		updated_audio_list.set( index, "" );
 	}
+
+	public int getCardID() {
+		return this.card_id;
+	}
+	
+	public int getIDOfLinkedCard() {
+		return this.id_of_linked_card;
+	}
 	
 	public String getText() {
 		return this.card_text;
@@ -1084,18 +1096,140 @@ class ReadingCardEditor {
 }
 
 /**
+ * Manages a list of ReadingCardEditor objects.
+ * Allowing us to insert and find a card by a binary search for efficiency.
+ */
+class ReadingCardEditorList {
+	ArrayList<ReadingCardEditor> all_cards;
+	
+	ReadingCardEditorList() {
+		this.all_cards = new ArrayList<ReadingCardEditor>();
+	}
+	
+	/**
+	 * Add a card to the list. This is done using a binary search.
+	 */
+	public void add( ReadingCardEditor card ) {
+		if( all_cards.size() == 0 ) {
+			all_cards.add( card );
+		} else {
+		
+			// Find the correct location to insert in the array
+			// Using a binary search.
+			int index = findCardInsertionIndexByCardID( card.getCardID(), 0, all_cards.size() -1 );
+		
+			// Add the card to the array
+			all_cards.add( index + 1, card );
+			
+		}
+	}
+	
+	/**
+	 * Recursive binary search through the list to find the correct location to insert a new card.
+	 * @param card_id
+	 * @param start_index
+	 * @param end_index
+	 * @return
+	 */
+	public int findCardInsertionIndexByCardID( int target_card_id, int start, int end  )  {
+		
+		int left = start;
+		int right = end;
+		
+		// Base cases
+		if( left >= right ) {
+			if( left >= all_cards.size() ) {
+				return all_cards.size() - 1;
+			}
+
+			if( target_card_id == all_cards.get( left ).getCardID() ) {
+				return left;
+			}
+			else if( target_card_id < all_cards.get( left ).getCardID() ) {
+				return left -1;
+
+			}
+			else if( target_card_id > all_cards.get( left ).getCardID() ) {
+				return left;
+			}
+		}
+		else {
+			
+			// search.
+			int middle_index = ( left + right ) / 2;
+			if( target_card_id < all_cards.get(middle_index).getCardID() ) {
+				right = middle_index - 1;
+				return findCardInsertionIndexByCardID(target_card_id, left, right);
+			}
+			else if( target_card_id > all_cards.get(middle_index).getCardID() ) {
+				left = middle_index + 1;
+				return findCardInsertionIndexByCardID(target_card_id, left, right);
+			} else {
+				return middle_index;
+			}
+		}
+
+		// Should never reach this statement.
+		return -1;
+	}
+	
+	/**
+	 * Binary search through the list and return the card with the card ID.
+	 * Returns null if there is no card found.
+	 * @param all_cards
+	 * @param target_card_id
+	 * @return
+	 */
+	public static ReadingCardEditor getCardByID( ReadingCardEditorList all_cards, int target_card_id ) {
+		return __getCardByID( all_cards, target_card_id, 0, all_cards.getAllCards().size() );
+
+	}
+
+	/**
+	 * Recursive binary search.
+	 */
+	public static ReadingCardEditor __getCardByID( ReadingCardEditorList all_cards, int target_card_id, int left, int right ) {
+		// search.
+		if( left <= right ) {
+			int middle_index = ( left + right ) / 2;
+
+			if( middle_index < all_cards.getAllCards().size() ) {
+				int middle_card_id = all_cards.getAllCards().get(middle_index).getCardID();
+				if( target_card_id == middle_card_id ) {
+					return all_cards.getAllCards().get(middle_index);
+				}
+				else if( target_card_id < middle_card_id ) {
+					right = middle_index - 1;
+					return __getCardByID( all_cards, target_card_id, left, right);
+				}
+				else if( target_card_id > middle_card_id ) {
+					left = middle_index + 1;
+					return __getCardByID( all_cards, target_card_id, left, right);
+				}
+			}
+		}
+		
+		return null;
+	}
+	
+	public ArrayList<ReadingCardEditor> getAllCards() {
+		return this.all_cards;
+	}
+}
+
+/**
  * The window(JFrame) to edit and create flashcards.
  *
  */
 class MyFlashcardManager {
-	ArrayList<ReadingCardEditor> incomplete_cards;
-	ArrayList<ReadingCardEditor> complete_cards;
+	ReadingCardEditorList all_cards;
 
 	Connection db_connection;
 
 	// Used to know which card we are displaying on the screen.
 	ReadingCardEditor current_card;
-	boolean is_current_card_in_the_completed_list;
+	ReadingCardEditor current_linked_card;
+	boolean was_current_card_complete;
 
 	// Frame components
 	JFrame frame;
@@ -1193,8 +1327,10 @@ class MyFlashcardManager {
 		incomplete_cards_list.setVisibleRowCount(-1);
 
 		// Assign cards to the lists
-		complete_cards_list  .setListData( makeStringArrayFromCards( complete_cards   ) );
-		incomplete_cards_list.setListData( makeStringArrayFromCards( incomplete_cards ) );
+		JListItemWithCardID[] complete_cards   = makeJListItemArray( this.all_cards.getAllCards(), true  );
+		JListItemWithCardID[] incomplete_cards = makeJListItemArray( this.all_cards.getAllCards(), false  );
+		complete_cards_list  .setListData( complete_cards   );
+		incomplete_cards_list.setListData( incomplete_cards );
 
 
 		// Setup the headings for "Completed Cards" and "Incomplete Cards".
@@ -1242,8 +1378,10 @@ class MyFlashcardManager {
 			public void valueChanged(ListSelectionEvent e) {
 				int index = incomplete_cards_list.getSelectedIndex();
 				if( index >= 0 ) {
-					setIsCurrentCardInTheCompletedList( false );
-					displayCard( incomplete_cards.get( index ), false );
+					int card_id =  ((JListItemWithCardID) incomplete_cards_list.getModel().getElementAt( index )).getCardID();
+					ReadingCardEditor card = ReadingCardEditorList.getCardByID( all_cards, card_id );
+					was_current_card_complete = false;
+					displayCard( card, false );
 				}
 			}
 		});
@@ -1253,8 +1391,10 @@ class MyFlashcardManager {
 			public void valueChanged(ListSelectionEvent e) {
 				int index = complete_cards_list.getSelectedIndex();
 				if( index >= 0 ) {
-					setIsCurrentCardInTheCompletedList( true );
-					displayCard( complete_cards.get( index ), false );
+					int card_id =  ((JListItemWithCardID) complete_cards_list.getModel().getElementAt( index )).getCardID();
+					ReadingCardEditor card = ReadingCardEditorList.getCardByID( all_cards, card_id );
+					was_current_card_complete = true;
+					displayCard( card, false );
 				}
 			}
 		});
@@ -1272,8 +1412,10 @@ class MyFlashcardManager {
 			public void mouseReleased(MouseEvent e) {
 				int index = incomplete_cards_list.getSelectedIndex();
 				if( index >= 0 ) {
-					setIsCurrentCardInTheCompletedList( false );
-					displayCard( incomplete_cards.get( index ), false );
+					int card_id =  ((JListItemWithCardID) incomplete_cards_list.getModel().getElementAt( index )).getCardID();
+					ReadingCardEditor card = ReadingCardEditorList.getCardByID( all_cards, card_id );
+					was_current_card_complete = false;
+					displayCard( card, false );
 				}
 			}
 
@@ -1295,8 +1437,10 @@ class MyFlashcardManager {
 			public void mouseReleased(MouseEvent e) {
 				int index = complete_cards_list.getSelectedIndex();
 				if( index >= 0 ) {
-					setIsCurrentCardInTheCompletedList( true );
-					displayCard( complete_cards.get( index ), false );
+					int card_id =  ((JListItemWithCardID) complete_cards_list.getModel().getElementAt( index )).getCardID();
+					ReadingCardEditor card = ReadingCardEditorList.getCardByID( all_cards, card_id );
+					was_current_card_complete = true;
+					displayCard( card, false );
 				}
 			}
 
@@ -1320,10 +1464,11 @@ class MyFlashcardManager {
 		frame.add( complete_cards_panel,   BorderLayout.EAST   );
 
 		// select the first card and load it.
-		if( incomplete_cards.size() > 0 ) {
+		if( incomplete_cards.length > 0 ) {
 			incomplete_cards_list.setSelectedIndex( 0 );
-			setIsCurrentCardInTheCompletedList( false );
-			displayCard( incomplete_cards.get(0), true );
+			int card_id =  ((JListItemWithCardID) incomplete_cards_list.getModel().getElementAt( 0 )).getCardID();
+			ReadingCardEditor card = ReadingCardEditorList.getCardByID( all_cards, card_id );
+			displayCard( card, false );
 		}
 
 
@@ -1657,6 +1802,10 @@ class MyFlashcardManager {
 	 * Will copy the files and update the card and then save it to the datebase.
 	 */
 	public void saveCard() {
+
+		// Get the incomplete card's index, so we can highlight the next line in the list later on.
+		int incomplete_card_index = incomplete_cards_list.getSelectedIndex();
+
 		// Update the lists with new data
 		current_card.audio_list = moveFilesAndGetUpdatedList( current_card.audio_list, current_card.updated_audio_list );
 		current_card.image_list = moveFilesAndGetUpdatedList( current_card.image_list, current_card.updated_image_list );
@@ -1665,37 +1814,49 @@ class MyFlashcardManager {
 		// Saves the card and updates it.
 		current_card.saveToDatabase( this.db_connection );
 		
-		// Move the card to the completed list if it's not already in there
-		if( ! is_current_card_in_the_completed_list ) {
-			int index = incomplete_cards_list.getSelectedIndex();
-			complete_cards.add( incomplete_cards.get( index ) );
-			incomplete_cards.remove( index );
-			setIsCurrentCardInTheCompletedList( true );
+		// Update and save the linked spelling card, if this is a word.
+		if( current_card.isCardAWord() ) {
+			current_linked_card.audio_list = current_card.audio_list;
+			current_linked_card.image_list = current_card.image_list;
+			current_linked_card.card_read_along_timings = current_card.card_read_along_timings;
+
+			current_linked_card.updated_audio_list = current_card.audio_list;
+			current_linked_card.updated_image_list = current_card.image_list;
+			current_linked_card.updated_read_along_timings = current_card.card_read_along_timings;
+			current_linked_card.saveToDatabase( this.db_connection );
 		}
 		
 		// Update the incomplete and completed lists.
-		complete_cards_list  .setListData( makeStringArrayFromCards( complete_cards   ) );
-		incomplete_cards_list.setListData( makeStringArrayFromCards( incomplete_cards ) );
+		JListItemWithCardID[] complete_cards   = makeJListItemArray( this.all_cards.getAllCards(), true  );
+		JListItemWithCardID[] incomplete_cards = makeJListItemArray( this.all_cards.getAllCards(), false  );
+		complete_cards_list  .setListData( complete_cards );
+		incomplete_cards_list.setListData( incomplete_cards );
 
-		// Draw it on screen.
-		displayCard(current_card, true);
 		
-		// Move on to the next card automatically for us.
-		if( incomplete_cards.size() > 0 ) {
-			incomplete_cards_list.setSelectedIndex( 0 );
-			setIsCurrentCardInTheCompletedList( false );
-			displayCard( incomplete_cards.get(0), true );
+		// Draw the next card on screen, depending whether we last clicked the incomplete or complete list.
+		// Also make the list highlight the next card.
+		// Don't increment the list index, because the incomplete card has now moved over to the completed list.
+		if( incomplete_cards.length > 0  && (! was_current_card_complete) ) {
+			
+			if( incomplete_card_index >= incomplete_cards_list.getModel().getSize() ) {
+				incomplete_card_index = incomplete_cards_list.getModel().getSize() -1;
+			}
+			
+			incomplete_cards_list.setSelectedIndex( incomplete_card_index );
+			int card_id =  ((JListItemWithCardID) incomplete_cards_list.getModel().getElementAt( incomplete_card_index )).getCardID();
+			ReadingCardEditor card = ReadingCardEditorList.getCardByID( all_cards, card_id );
+			displayCard( card, false );
+		} else {
+			displayCard(current_card, false );
 		}
 	}
 
 	/**
-	 * Scans through all reading lesson files and populates
-	 * the complete_cards and incomplete_cards lists based
+	 * Scans through all reading lesson files and populates a list based
 	 * on whether they are missing any media.
 	 */
 	public void loadCards( Connection db_connection ) {
-		this.complete_cards   = new ArrayList<ReadingCardEditor>();
-		this.incomplete_cards = new ArrayList<ReadingCardEditor>();
+		this.all_cards = new ReadingCardEditorList();
 
 
 		// Load cards from database and add to incomplete and completed lists.
@@ -1727,12 +1888,8 @@ class MyFlashcardManager {
 					rs.getString( "card_read_along_timings" )
 				);
 
-				// Add the card to the completed or incompleted list.
-				if( card.isCardComplete() ) {
-					complete_cards.add( card );
-				} else {
-					incomplete_cards.add( card );
-				}
+				// Add the card to the list.
+				this.all_cards.add( card );
 			}
 		} catch ( SQLException e ) {
 			e.printStackTrace();
@@ -1740,12 +1897,14 @@ class MyFlashcardManager {
 	}
 
 	/**
-	 * Returns an Array of Strings by getting the
+	 * Returns an Array of JListItemWithCardID by getting the
 	 * word, sound, or sentence from a reading lesson card.
 	 * Sentences will be truncated to a width of MAXIMUM_JLIST_STRING_LENGTH.
+	 * 
+	 * @param is_getting_completed - Pass true for list of completed cards. Pass False for list of incomplete cards.
 	 */
-	public String[] makeStringArrayFromCards ( ArrayList<ReadingCardEditor> cards ) {
-		ArrayList<String> card_front_list = new ArrayList<String>();
+	public JListItemWithCardID[] makeJListItemArray ( ArrayList<ReadingCardEditor> cards, boolean is_getting_completed_list ) {
+		ArrayList<JListItemWithCardID> card_front_list = new ArrayList<JListItemWithCardID>();
 
 		for( int i = 0; i < cards.size(); i++ ) {
 			String text = cards.get(i).getText();
@@ -1756,22 +1915,38 @@ class MyFlashcardManager {
 				text = text.substring( 0, MAXIMUM_JLIST_STRING_LENGTH - 3 );
 				text += "...";
 			}
-
-			card_front_list.add( text );
+			
+			if( cards.get(i).isCardAWord() && cards.get(i).isSpellingMode() ) {
+				// Do nothing.
+				// We don't want to add the spelling cards to the JList.
+			}
+			else {
+				JListItemWithCardID jlist_item = new JListItemWithCardID( text, cards.get(i).getCardID() );
+			
+				if( cards.get(i).isCardComplete() == is_getting_completed_list ) {
+					card_front_list.add( jlist_item );
+				}
+			}
 		}
 
 		// Convert the ArrayList to an array and return.
-		return card_front_list.toArray( new String[ card_front_list.size() ] );
+		return card_front_list.toArray( new JListItemWithCardID[ card_front_list.size() ] );
 	}
 
+	public ReadingCardEditor getCurrentLinkedCard() {
+		return this.current_linked_card;
+	}
 	public ReadingCardEditor getCurrentCard() {
 		return this.current_card;
 	}
-	public void setCurrentCard( ReadingCardEditor card) {
+	
+	public void setCurrentCard( ReadingCardEditor card ) {
 		this.current_card = card;
-	}
-	public void setIsCurrentCardInTheCompletedList( boolean b ) {
-		this.is_current_card_in_the_completed_list = b;
+		if( card.isCardAWord() ) {
+			this.current_linked_card = ReadingCardEditorList.getCardByID( all_cards, card.getIDOfLinkedCard() );
+		} else {
+			this.current_linked_card = null;
+		}
 	}
 
 	/**
@@ -2054,6 +2229,29 @@ class MyFlashcardManager {
 		frame.validate();
 	}
 }
+
+/**
+ * JList will be able to access the .toString() method to display the card's text.
+ * We also store the card_id, because it helps us find the card in our main array.
+ */
+class JListItemWithCardID {
+	String text;
+	int card_id;
+
+	JListItemWithCardID( String text, int card_id ) {
+		this.text = text;
+		this.card_id = card_id;
+	}
+	
+	public int getCardID() {
+		return this.card_id;
+	}
+
+	public String toString() {
+		return this.text;
+	}
+}
+
 /**
  * Manage lists of words for the two lists at each side of the JFrame.
  * Most common words list and the previous lessons words list.
