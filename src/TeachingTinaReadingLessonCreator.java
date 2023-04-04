@@ -990,6 +990,10 @@ class ReadingCardEditor {
 		return this.card_text;
 	}
 	
+	public String getSoundType() {
+		return this.sound_type;
+	}
+	
 	public String getReadAlongTimings() {
 		if( this.updated_read_along_timings != null ) {
 			return this.updated_read_along_timings;
@@ -1973,6 +1977,7 @@ class MyFlashcardManager {
 		MyScrollableJPanel panel = new MyScrollableJPanel();
 		panel.setLayout( new BoxLayout(panel, BoxLayout.Y_AXIS) );
 
+		JLabel card_sound_word_or_sentence_title = new JLabel( "" );
 		JLabel card_completion_title         = new JLabel( "" );
 		JLabel card_text_title               = new JLabel( "Card's text: " );
 		JLabel card_image_title              = new JLabel( "Card's Images: " );
@@ -1993,9 +1998,11 @@ class MyFlashcardManager {
 
 		// Use a JLabel for padding as a JSeparator just doesn't give us enough padding.
 		// Yeah, lazy, but it works lol.
+		JLabel padding_label_0 = new JLabel("  ");
 		JLabel padding_label_1 = new JLabel("  ");
 		JLabel padding_label_2 = new JLabel("  ");
 		JLabel padding_label_3 = new JLabel("  ");
+		padding_label_0.setFont(large_font);
 		padding_label_1.setFont(large_font);
 		padding_label_2.setFont(large_font);
 		padding_label_3.setFont(large_font);
@@ -2017,6 +2024,24 @@ class MyFlashcardManager {
 		button_save_card.setEnabled( false );
 
 		panel.add( button_save_card );
+
+		// Set the sound type title depending whether it's a sound, word, or sentence.
+		if( card.isCardASound() ) {
+			card_sound_word_or_sentence_title = new JLabel( "<html><div align='center'><b>Sound: " + card.getSoundType() + "</b><div></html>", BoxLayout.X_AXIS);
+			card_sound_word_or_sentence_title.setFont( large_font );
+			card_sound_word_or_sentence_title.setAlignmentX( Component.CENTER_ALIGNMENT );
+		} else if( card.isCardAWord() ) {
+			card_sound_word_or_sentence_title = new JLabel( "<html><div align='center'><b>Word</b><div></html>", BoxLayout.X_AXIS);
+			card_sound_word_or_sentence_title.setFont( large_font );
+			card_sound_word_or_sentence_title.setAlignmentX( Component.CENTER_ALIGNMENT );
+		} else if( card.isCardASentence() ) {
+			card_sound_word_or_sentence_title = new JLabel( "<html><div align='center'><b>Sentence</b><div></html>", BoxLayout.X_AXIS);
+			card_sound_word_or_sentence_title.setFont( large_font );
+			card_sound_word_or_sentence_title.setAlignmentX( Component.CENTER_ALIGNMENT );
+		}
+		panel.add( card_sound_word_or_sentence_title );
+		panel.add( padding_label_0 );
+		panel.add( new JSeparator() );
 	
 		// Display Card's text.
 		panel.add( card_text_title );
